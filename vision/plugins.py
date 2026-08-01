@@ -1,0 +1,1235 @@
+# ruff: noqa: E501
+"""Provider-neutral plugin contracts and fail-closed registry."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import re
+import secrets
+import subprocess
+import tempfile
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
+from importlib import metadata
+from pathlib import Path
+from typing import Any, Literal
+
+from .contract import Strict, VisionContract
+from .preprocess import PreparedInput, preprocess
+from .types import Box, DetectionResult
+
+
+@dataclass(frozen=True)
+class PreparedSource:
+    material_path: Path
+    sha256: str
+    plugin_id: str
+    plugin_version: str
+    contract_digest: str
+    descriptors: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedArtifact:
+    material_path: Path
+    sha256: str
+    plugin_id: str
+    plugin_version: str
+    contract_digest: str
+    descriptors: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class MaterializedOnnx:
+    """A rehashable ONNX export plus its source-to-export lineage record.
+
+    This is deliberately not a certification result.  Targets still validate the
+    exported graph and conformance owns any certification decision.
+    """
+
+    material_path: Path
+    sha256: str
+    source_sha256: str
+    plugin_id: str
+    plugin_version: str
+    contract_digest: str
+    lineage_path: Path
+    lineage_sha256: str
+    receipt: str
+
+
+def _prepared(path: str | Path, plugin_id: str, plugin_version: str, contract: VisionContract) -> dict:
+    """Create the only permitted material-handle fields.
+
+    Handles deliberately contain no object graph, callback, tensor, or runtime
+    session.  Runtime state must be derived again from verified material.
+    """
+    material = Path(path)
+    if material.is_symlink() or not material.is_file():
+        raise ValueError("material must be a regular file")
+    return {
+        "material_path": material,
+        "sha256": hashlib.sha256(material.read_bytes()).hexdigest(),
+        "plugin_id": plugin_id,
+        "plugin_version": plugin_version,
+        "contract_digest": contract.digest,
+        "descriptors": (),
+    }
+
+
+def _verify_source_handle(captured: PreparedSource, contract: VisionContract, plugin: SourceAdapter) -> None:
+    if (
+        captured.plugin_id != plugin.plugin_id
+        or captured.plugin_version != plugin.plugin_version
+        or captured.contract_digest != contract.digest
+        or captured.sha256 != contract.provenance.source_sha256
+        or captured.material_path.is_symlink()
+        or not captured.material_path.is_file()
+        or hashlib.sha256(captured.material_path.read_bytes()).hexdigest() != captured.sha256
+    ):
+        raise ValueError("source handle is not bound to verified checkpoint material and contract")
+
+
+def _materialized(
+    path: Path, captured: PreparedSource, contract: VisionContract, plugin: SourceAdapter
+) -> MaterializedOnnx:
+    if path.is_symlink() or not path.is_file() or path.suffix.lower() != ".onnx":
+        raise ValueError("provider export did not produce a regular .onnx file")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    lineage = path.with_suffix(path.suffix + ".lineage.json")
+    body = {
+        "schema": 1,
+        "source_sha256": captured.sha256,
+        "onnx_sha256": digest,
+        "source_plugin": plugin.plugin_id,
+        "source_plugin_version": plugin.plugin_version,
+        "contract_digest": contract.digest,
+    }
+    lineage.write_text(json.dumps(body, sort_keys=True, separators=(",", ":")))
+    materialized = MaterializedOnnx(
+        path,
+        digest,
+        captured.sha256,
+        plugin.plugin_id,
+        plugin.plugin_version,
+        contract.digest,
+        lineage,
+        hashlib.sha256(lineage.read_bytes()).hexdigest(),
+        "",
+    )
+    return plugin._issue_materialization(materialized, captured, contract)
+
+
+def _verify_materialized_onnx(materialized: MaterializedOnnx, contract: VisionContract) -> None:
+    if (
+        materialized.contract_digest != contract.digest
+        or materialized.source_sha256 != contract.provenance.source_sha256
+        or materialized.material_path.is_symlink()
+        or not materialized.material_path.is_file()
+        or hashlib.sha256(materialized.material_path.read_bytes()).hexdigest() != materialized.sha256
+        or materialized.lineage_path.is_symlink()
+        or not materialized.lineage_path.is_file()
+        or hashlib.sha256(materialized.lineage_path.read_bytes()).hexdigest() != materialized.lineage_sha256
+    ):
+        raise ValueError("materialized ONNX is not bound to verified export and lineage bytes")
+    try:
+        lineage = json.loads(materialized.lineage_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("materialized ONNX lineage record is invalid") from exc
+    if lineage != {
+        "schema": 1,
+        "source_sha256": materialized.source_sha256,
+        "onnx_sha256": materialized.sha256,
+        "source_plugin": materialized.plugin_id,
+        "source_plugin_version": materialized.plugin_version,
+        "contract_digest": materialized.contract_digest,
+    }:
+        raise ValueError("materialized ONNX lineage record does not bind the export")
+
+
+def _verify_materialized_boundary(
+    materialized: MaterializedOnnx, captured: PreparedSource, contract: VisionContract
+) -> None:
+    if (
+        captured.contract_digest != contract.digest
+        or captured.sha256 != contract.provenance.source_sha256
+        or captured.material_path.is_symlink()
+        or not captured.material_path.is_file()
+        or hashlib.sha256(captured.material_path.read_bytes()).hexdigest() != captured.sha256
+        or materialized.source_sha256 != captured.sha256
+        or materialized.plugin_id != captured.plugin_id
+        or materialized.plugin_version != captured.plugin_version
+    ):
+        raise ValueError("materialized ONNX is not bound to the captured source")
+    _verify_materialized_onnx(materialized, contract)
+
+
+def _validate_onnx_contract(path: Path, contract: VisionContract) -> None:
+    """Check all observable input/output interface facts; not a decoder proof."""
+    try:
+        import onnx
+    except ImportError as exc:
+        raise RuntimeError("ONNX graph validation requires vision-buildkit[onnx]") from exc
+    graph = onnx.load(str(path)).graph
+    types = {1: "float32", 10: "float16", 7: "int64", 2: "uint8"}
+
+    def check(values, declared):
+        actual = {item.name: item for item in values}
+        if set(actual) != set(declared):
+            raise ValueError(f"ONNX tensor names mismatch: declared={sorted(declared)}, actual={sorted(actual)}")
+        for name, spec in declared.items():
+            tensor = actual[name].type.tensor_type
+            dims = tuple(dim.dim_value if dim.HasField("dim_value") else None for dim in tensor.shape.dim)
+            if (
+                types.get(tensor.elem_type) != spec[0]
+                or len(dims) != len(spec[1])
+                or any(
+                    expected != observed
+                    for expected, observed in zip(spec[1], dims, strict=True)
+                    if isinstance(expected, int)
+                )
+            ):
+                raise ValueError(f"ONNX tensor interface mismatch for {name}")
+
+    check(graph.input, {contract.input.input_name: (contract.input.dtype, contract.input.shape)})
+    check(graph.output, {item.name: (item.dtype, item.shape) for item in contract.raw_output.tensors})
+
+
+class Capabilities(Strict):
+    """Structured source requirements or target supports."""
+
+    precisions: frozenset[str] = frozenset()
+    modes: frozenset[Literal["static", "dynamic"]] = frozenset()
+    nms_owners: frozenset[Literal["none", "source", "target", "contract"]] = frozenset()
+
+
+class SourceAdapter(ABC):
+    plugin_id: str
+    plugin_version: str
+    capabilities: Capabilities | frozenset[str] = frozenset()
+
+    @abstractmethod
+    def capture(self, source: Any, contract: VisionContract) -> Any: ...
+
+    def prepare_input(self, captured: PreparedSource, sample: Any, contract: VisionContract) -> Any:
+        """Decode a verified case.  Only this adapter may interpret its state."""
+        return sample
+
+    @abstractmethod
+    def run(self, captured: PreparedSource, sample: Any) -> Any: ...
+
+    def prepare(self, source: str | Path, contract: VisionContract) -> PreparedSource:
+        self.capture(Path(source), contract)  # validate source-specific material only
+        return PreparedSource(**_prepared(source, self.plugin_id, self.plugin_version, contract))
+
+    def _issue_materialization(
+        self, materialized: MaterializedOnnx, captured: PreparedSource, contract: VisionContract
+    ) -> MaterializedOnnx:
+        """Issue process-local integrity state; this is neither a signature nor authenticity proof."""
+        receipt = secrets.token_urlsafe(24)
+        receipts = getattr(self, "_materialization_receipts", None)
+        if receipts is None:
+            receipts = {}
+            self._materialization_receipts = receipts
+        receipts[receipt] = (
+            captured.sha256,
+            materialized.sha256,
+            contract.digest,
+            materialized.lineage_sha256,
+            materialized.plugin_id,
+            materialized.plugin_version,
+        )
+        return replace(materialized, receipt=receipt)
+
+    def verify_materialization(
+        self, materialized: MaterializedOnnx, captured: PreparedSource, contract: VisionContract
+    ) -> bool:
+        receipt = getattr(self, "_materialization_receipts", {}).get(materialized.receipt)
+        return receipt == (
+            captured.sha256,
+            materialized.sha256,
+            contract.digest,
+            materialized.lineage_sha256,
+            materialized.plugin_id,
+            materialized.plugin_version,
+        )
+
+    def materialize_onnx(
+        self, captured: PreparedSource, contract: VisionContract, output: str | Path
+    ) -> MaterializedOnnx:
+        """Export verified source bytes into ONNX; providers must override this.
+
+        A target receives only the neutral ONNX material below, never a provider
+        object, model, runner, or session.
+        """
+        raise RuntimeError(f"{self.plugin_id} cannot materialize ONNX")
+
+
+class TargetPlugin(ABC):
+    plugin_id: str
+    plugin_version: str
+    capabilities: Capabilities | frozenset[str] = frozenset()
+
+    @abstractmethod
+    def build(self, captured: Any, candidate: Any, output: Path | None = None) -> Any: ...
+
+    def prepare_materialized(
+        self,
+        materialized: MaterializedOnnx,
+        captured_source: PreparedSource,
+        source: SourceAdapter,
+        contract: VisionContract,
+    ) -> PreparedArtifact:
+        """The sole provider-neutral target preparation boundary."""
+        _verify_materialized_boundary(materialized, captured_source, contract)
+        if not source.verify_materialization(materialized, captured_source, contract):
+            raise ValueError("materialized ONNX lacks an in-process source receipt")
+        return self._prepare_onnx(materialized.material_path, materialized, contract)
+
+    def _prepare_onnx(self, source: Path, materialized: MaterializedOnnx, contract: VisionContract) -> PreparedArtifact:
+        raise RuntimeError(f"{self.plugin_id} does not prepare neutral ONNX material")
+
+    def prepare_input(self, artifact: PreparedArtifact, sample: Any, contract: VisionContract) -> Any:
+        return sample
+
+    @abstractmethod
+    def run(self, artifact: PreparedArtifact, sample: Any) -> Any: ...
+
+    def verify_artifact(self, artifact: PreparedArtifact, contract: VisionContract) -> bool:
+        """Return true only for an artifact this target can actually execute."""
+        return False
+
+
+class PythonObjectSource(SourceAdapter):
+    plugin_id, plugin_version = "python-object", "1"
+    capabilities = frozenset({"python", "detection"})
+
+    def capture(self, source, contract):
+        raise ValueError("python objects are not material build sources")
+
+    def run(self, captured, sample):
+        raise RuntimeError("python-object has no content-bound runner")
+
+
+class ManualOnnxSource(SourceAdapter):
+    plugin_id, plugin_version = "manual-onnx", "1"
+    capabilities = Capabilities(
+        precisions=frozenset({"fp32", "fp16"}),
+        modes=frozenset({"static", "dynamic"}),
+        nms_owners=frozenset({"none", "source", "target"}),
+    )
+
+    def capture(self, source, contract):
+        path = Path(source)
+        if path.suffix.lower() != ".onnx" or not path.is_file():
+            raise ValueError("manual ONNX source must be an existing .onnx file")
+        return path
+
+    def run(self, captured, sample):
+        raise RuntimeError("manual ONNX source has no generic runner; supply a runtime source adapter")
+
+    def materialize_onnx(self, captured, contract, output):
+        _verify_source_handle(captured, contract, self)
+        path = captured.material_path
+        if path != Path(output):
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            Path(output).write_bytes(path.read_bytes())
+            path = Path(output)
+        return _materialized(path, captured, contract, self)
+
+
+class LegacyAdapterSource(SourceAdapter):
+    """Bridge an existing ModelAdapter instance into the BuildKit source API."""
+
+    plugin_id, plugin_version = "legacy-model-adapter", "1"
+    capabilities = frozenset({"detection"})
+
+    def capture(self, source, contract):
+        raise ValueError("legacy object adapters are not material build sources")
+
+    def run(self, captured, sample):
+        raise RuntimeError("legacy object adapters have no content-bound runner")
+
+
+class OnnxRuntimeTargetPlugin(TargetPlugin):
+    """Lazy, real ONNX Runtime target for declared boxes/scores/classes outputs."""
+
+    plugin_id = "onnxruntime"
+    capabilities = Capabilities(
+        precisions=frozenset({"fp32", "fp16"}),
+        modes=frozenset({"static", "dynamic"}),
+        nms_owners=frozenset({"none", "source", "target"}),
+    )
+
+    @property
+    def plugin_version(self):
+        try:
+            return metadata.version("onnxruntime")
+        except metadata.PackageNotFoundError:
+            return "unavailable"
+
+    @staticmethod
+    def _ort():
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise RuntimeError("onnxruntime target unavailable; install vision-buildkit[onnx]") from exc
+        return ort
+
+    @staticmethod
+    def _assert_cpu_execution_provider(session) -> dict[str, str]:
+        """Fail closed unless ORT confirms the requested CPU-only execution path."""
+        providers = session.get_providers()
+        if providers != ["CPUExecutionProvider"]:
+            raise ValueError(f"ONNX Runtime session must use exactly ['CPUExecutionProvider']; observed {providers!r}")
+        return {"execution_provider": "CPUExecutionProvider", "execution_device": "cpu"}
+
+    def build(self, captured, candidate, output=None):
+        contract = getattr(captured, "contract", None) or (
+            captured.get("contract") if isinstance(captured, dict) else None
+        )
+        source = getattr(captured, "path", None) or (captured.get("path") if isinstance(captured, dict) else captured)
+        return self.prepare(source, contract)
+
+    def prepare(self, source: str | Path, contract: VisionContract) -> PreparedArtifact:
+        """Legacy manual-ONNX entry point; only contract-hashed material is accepted."""
+        path = Path(source)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+        if digest != contract.provenance.source_sha256:
+            raise ValueError("direct ONNX preparation requires contract-hashed source material")
+        return self._prepare_onnx(path, None, contract)
+
+    def _prepare_onnx(
+        self, source: Path, materialized: MaterializedOnnx | None, contract: VisionContract
+    ) -> PreparedArtifact:
+        if contract is None:
+            raise ValueError("ONNX Runtime target requires VisionContract")
+        if (
+            contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
+            or contract.result.box_format != "xyxy"
+        ):
+            raise ValueError("ONNX Runtime target supports declared xyxy separate outputs or yolo_end2end only")
+        if contract.result.coordinate_space != "original_image":
+            raise ValueError("ONNX Runtime target requires original_image coordinate semantics")
+        path = Path(source)
+        if not path.is_file() or path.suffix.lower() != ".onnx":
+            raise ValueError("ONNX Runtime target requires an ONNX file")
+        import hashlib
+
+        lineage_source = materialized.source_sha256 if materialized else hashlib.sha256(path.read_bytes()).hexdigest()
+        if lineage_source != contract.provenance.source_sha256:
+            raise ValueError("ONNX source lineage digest does not match contract provenance")
+        _validate_onnx_contract(path, contract)
+        if contract.raw_output.semantics == "yolo_end2end":
+            self._validate_optional_ultralytics_metadata(path, contract)
+        session = self._ort().InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        self._assert_cpu_execution_provider(session)
+        inputs, outputs = session.get_inputs(), session.get_outputs()
+        if len(inputs) != 1:
+            raise ValueError("ONNX target requires exactly one input")
+        if inputs[0].name != contract.input.input_name or tuple(inputs[0].shape) != tuple(contract.input.shape):
+            raise ValueError("ONNX input name or concrete shape does not match contract")
+        declared = {x.name: x for x in contract.raw_output.tensors}
+        available = {x.name for x in outputs}
+        if set(declared) != available:
+            raise ValueError(f"ONNX output names mismatch: declared={sorted(declared)}, available={sorted(available)}")
+        if contract.raw_output.semantics == "yolo_end2end":
+            only = contract.raw_output.tensors[0]
+            observed = outputs[0] if len(outputs) == 1 else None
+            if (
+                observed is None
+                or observed.name != only.name
+                or observed.type not in {"tensor(float)", "tensor(float16)"}
+                or len(observed.shape) not in {2, 3}
+                or observed.shape[-1] != 6
+            ):
+                raise ValueError("ONNX yolo_end2end output does not match contract")
+        roles = contract.raw_output.roles or {}
+        for role, expected in roles.items():
+            observed = next((item for item in outputs if item.name == expected), None)
+            if observed is None:
+                raise ValueError(f"ONNX {role} role does not name an output")
+            declared_spec = declared[expected]
+            ort_type = {
+                "tensor(float)": "float32",
+                "tensor(float16)": "float16",
+                "tensor(int64)": "int64",
+                "tensor(uint8)": "uint8",
+            }.get(observed.type)
+            if ort_type != declared_spec.dtype:
+                raise ValueError(f"ONNX {role} dtype does not match contract")
+        handle = _prepared(path, self.plugin_id, self.plugin_version, contract)
+        artifact_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        descriptors = [
+            ("origin", "provider_export" if materialized else "direct_source"),
+            ("contract_json", contract.canonical_json()),
+            ("source_sha256", lineage_source),
+            ("artifact_sha256", artifact_sha),
+        ]
+        if materialized:
+            descriptors.extend(
+                [
+                    ("source_plugin", materialized.plugin_id),
+                    ("source_plugin_version", materialized.plugin_version),
+                    ("lineage_sha256", materialized.lineage_sha256),
+                    ("lineage_path", str(materialized.lineage_path)),
+                ]
+            )
+        handle["descriptors"] = tuple(descriptors)
+        return PreparedArtifact(**handle)
+
+    @staticmethod
+    def _validate_optional_ultralytics_metadata(path: Path, contract: VisionContract) -> None:
+        try:
+            import ast
+
+            import onnx
+        except ImportError:
+            return
+        meta = {item.key: item.value for item in onnx.load(str(path), load_external_data=False).metadata_props}
+        if str(meta.get("author", "")).strip().lower() != "ultralytics":
+            return
+        args: dict[str, Any] = {}
+        if "args" in meta:
+            try:
+                args = ast.literal_eval(meta["args"])
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError("Ultralytics metadata args is invalid") from exc
+            if not isinstance(args, dict):
+                raise ValueError("Ultralytics metadata args must be a dictionary")
+
+        def declared(key: str) -> str:
+            top, nested = meta.get(key), args.get(key)
+            if top is not None and nested is not None and str(top).strip().lower() != str(nested).strip().lower():
+                raise ValueError(f"Ultralytics metadata {key!r} contradicts args")
+            return str(top if top is not None else nested).strip().lower()
+
+        required = {"task": "detect", "end2end": "true", "nms": "false"}
+        for key, value in required.items():
+            if declared(key) != value:
+                raise ValueError(f"Ultralytics metadata {key!r} contradicts yolo_end2end contract")
+        head = str(meta.get("head", "")).strip().split(".")[-1].lower()
+        if head != "detect":
+            raise ValueError("Ultralytics metadata 'head' contradicts yolo_end2end contract")
+        if "imgsz" in meta:
+            try:
+                size = ast.literal_eval(meta["imgsz"])
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError("Ultralytics metadata imgsz is invalid") from exc
+            if tuple(size) != tuple(contract.input.shape[-2:]):
+                raise ValueError("Ultralytics metadata imgsz contradicts contract input shape")
+        if "names" in meta:
+            try:
+                names = ast.literal_eval(meta["names"])
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError("Ultralytics metadata names is invalid") from exc
+            if (
+                not isinstance(names, dict)
+                or list(names.keys()) != list(range(len(contract.labels)))
+                or tuple(names.values()) != contract.labels
+            ):
+                raise ValueError("Ultralytics metadata names contradicts contract labels")
+
+    def verify_artifact(self, artifact: PreparedArtifact, contract: VisionContract) -> bool:
+        descriptors = dict(artifact.descriptors)
+        if len(descriptors) != len(artifact.descriptors):
+            return False
+        origin = descriptors.get("origin")
+        direct_keys = {"origin", "contract_json", "source_sha256", "artifact_sha256"}
+        export_keys = direct_keys | {"source_plugin", "source_plugin_version", "lineage_path", "lineage_sha256"}
+        if (
+            (origin == "direct_source" and set(descriptors) != direct_keys)
+            or (origin == "provider_export" and set(descriptors) != export_keys)
+            or origin not in {"direct_source", "provider_export"}
+        ):
+            return False
+        material_sha = (
+            hashlib.sha256(artifact.material_path.read_bytes()).hexdigest() if artifact.material_path.is_file() else ""
+        )
+        if (
+            descriptors.get("contract_json") != contract.canonical_json()
+            or descriptors.get("artifact_sha256") != material_sha
+        ):
+            return False
+        if origin == "direct_source":
+            return (
+                artifact.sha256 == material_sha == contract.provenance.source_sha256
+                and descriptors.get("source_sha256") == contract.provenance.source_sha256
+                and artifact.plugin_id == self.plugin_id
+                and artifact.plugin_version == self.plugin_version
+                and artifact.contract_digest == contract.digest
+                and artifact.material_path.is_file()
+                and not artifact.material_path.is_symlink()
+            )
+        lineage_path = descriptors.get("lineage_path")
+        lineage_sha256 = descriptors.get("lineage_sha256")
+        lineage_ok = (lineage_path is None and lineage_sha256 is None) or (
+            lineage_path is not None
+            and lineage_sha256 is not None
+            and Path(lineage_path).is_file()
+            and not Path(lineage_path).is_symlink()
+            and hashlib.sha256(Path(lineage_path).read_bytes()).hexdigest() == lineage_sha256
+        )
+        if not lineage_ok:
+            return False
+        try:
+            lineage = json.loads(Path(lineage_path).read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            return False
+        return (
+            artifact.plugin_id == self.plugin_id
+            and artifact.plugin_version == self.plugin_version
+            and descriptors.get("source_sha256") == contract.provenance.source_sha256
+            and lineage
+            == {
+                "schema": 1,
+                "source_sha256": descriptors["source_sha256"],
+                "onnx_sha256": descriptors["artifact_sha256"],
+                "source_plugin": descriptors["source_plugin"],
+                "source_plugin_version": descriptors["source_plugin_version"],
+                "contract_digest": contract.digest,
+            }
+            and artifact.contract_digest == contract.digest
+            and artifact.material_path.is_file()
+            and not artifact.material_path.is_symlink()
+            and material_sha == artifact.sha256
+        )
+
+    def _verified_session(self, artifact: PreparedArtifact, contract: VisionContract):
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("ONNX artifact handle is not bound to verified material and contract")
+        session = self._ort().InferenceSession(str(artifact.material_path), providers=["CPUExecutionProvider"])
+        self._assert_cpu_execution_provider(session)
+        if len(session.get_inputs()) != 1:
+            raise ValueError("ONNX target requires exactly one input")
+        return session
+
+    def run(self, artifact, sample):
+        import numpy as np
+
+        if not isinstance(sample, PreparedInput):
+            raise ValueError("ONNX Runtime target requires a contract PreparedInput")
+        # The contract is supplied by `prepare_input`/certification verification;
+        # run reconstructs a session only from rehashed ONNX material.  A caller
+        # cannot substitute a prepared handle's session or runner.
+        contract_json = dict(artifact.descriptors).get("contract_json")
+        if not contract_json:
+            raise ValueError("ONNX artifact lacks immutable contract descriptor")
+        contract = VisionContract.model_validate_json(contract_json)
+        session = self._verified_session(artifact, contract)
+        execution_metadata = self._assert_cpu_execution_provider(session)
+        values = session.run(None, {session.get_inputs()[0].name: sample.tensor})
+        tensors = {x.name: value for x, value in zip(session.get_outputs(), values, strict=True)}
+        roles = contract.raw_output.roles or {}
+        if contract.raw_output.semantics == "yolo_end2end":
+            if sample.trace is None:
+                raise ValueError("yolo_end2end requires geometry trace")
+            from .decoders import yolo_end2end_contract
+
+            result = yolo_end2end_contract(
+                tensors[contract.raw_output.tensors[0].name], sample.trace, contract, image_size=sample.image_size
+            )
+            result.metadata.update(execution_metadata | {"input_sha256": sample.input_sha256})
+            return result
+        boxes = np.asarray(tensors[roles["boxes"]]).reshape(-1, 4)
+        scores = np.asarray(tensors[roles["scores"]]).reshape(-1)
+        classes = np.asarray(tensors[roles["classes"]]).reshape(-1)
+        if len(boxes) != len(scores) or len(boxes) != len(classes):
+            raise ValueError("ONNX boxes/scores/classes output cardinality mismatch")
+        return DetectionResult(
+            [Box(*map(float, box)) for box in boxes],
+            [float(x) for x in scores],
+            [int(x) for x in classes],
+            image_size=sample.image_size,
+            metadata=execution_metadata | {"input_sha256": sample.input_sha256},
+        )
+
+    def prepare_input(self, artifact: PreparedArtifact, sample: Any, contract: VisionContract) -> PreparedInput:
+        """Decode image material and apply the exact contract preprocessing.
+
+        This deliberately accepts only a regular image file or its verified bytes;
+        callers cannot smuggle a ready-made tensor past the contract.
+        """
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("ONNX artifact handle is not bound to verified material and contract")
+        return preprocess(contract, sample)
+
+
+class TensorRTTargetPlugin(TargetPlugin):
+    """Pinned TensorRT engine target with no ORT or CPU execution fallback.
+
+    A plugin instance represents one explicit build request.  This avoids a
+    mutable global target configuration becoming detached from the engine it
+    produced, which matters for a certificate rather more than convenience.
+    """
+
+    plugin_id = "tensorrt"
+    plugin_version = "1"
+    capabilities = Capabilities(
+        precisions=frozenset({"fp32", "fp16"}),
+        modes=frozenset({"static"}),
+        nms_owners=frozenset({"none", "source"}),
+    )
+
+    def __init__(
+        self,
+        *,
+        engine_output: str | Path | None = None,
+        precision: Literal["fp32", "fp16"] = "fp32",
+        trtexec_path: str | None = None,
+        target_platform: str | None = None,
+        timeout_seconds: int = 300,
+    ):
+        if precision not in self.capabilities.precisions:
+            raise ValueError("TensorRT BuildKit target currently supports fp32 or fp16 only")
+        if timeout_seconds <= 0:
+            raise ValueError("TensorRT timeout_seconds must be positive")
+        if target_platform is not None:
+            raise ValueError("TensorRT target platform is observed from the build host, not user asserted")
+        self.engine_output = Path(engine_output) if engine_output is not None else None
+        self.precision = precision
+        self.trtexec_path = trtexec_path
+        self.timeout_seconds = timeout_seconds
+        self._artifact_receipts: dict[str, tuple[str, str, str]] = {}
+
+    @staticmethod
+    def _sha(path: Path) -> str:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("TensorRT artifact material must be a regular non-symlink file")
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    @staticmethod
+    def _redact_command(command: list[str]) -> list[str]:
+        """Keep flags/roles, never persist local paths or executable locations."""
+        redacted = ["<trtexec>"]
+        for item in command[1:]:
+            if item.startswith("--onnx="):
+                redacted.append("--onnx=<verified-onnx>")
+            elif item.startswith("--saveEngine="):
+                redacted.append("--saveEngine=<artifact-engine>")
+            elif item.startswith("--calib="):
+                redacted.append("--calib=<redacted>")
+            else:
+                redacted.append(item)
+        return redacted
+
+    @staticmethod
+    def _expected_command(precision: str) -> tuple[str, ...]:
+        """The sole portable compiler policy accepted for certified engines."""
+        command = ["<trtexec>", "--onnx=<verified-onnx>", "--saveEngine=<artifact-engine>"]
+        if precision == "fp16":
+            command.append("--fp16")
+        elif precision == "fp32":
+            command.append("--noTF32")
+        else:
+            raise ValueError("TensorRT certified precision is unsupported")
+        command.append("--skipInference")
+        return tuple(command)
+
+    @staticmethod
+    def _redact_log(logs: str) -> str:
+        # trtexec diagnostics can repeat absolute path arguments.  Preserve a
+        # bounded semantic diagnostic, never a build host path or command line.
+        cleaned = re.sub(r"(?:[A-Za-z]:)?/[^\s'\"]+", "<path>", logs)
+        return cleaned[-8000:]
+
+    @staticmethod
+    def _build_host_metadata(executable: str, trtexec_version: str) -> dict[str, str]:
+        result = {
+            "os": platform.system(),
+            "architecture": platform.machine(),
+            "builder_target": f"{platform.system()}-{platform.machine()}",
+            "trtexec_sha256": TensorRTTargetPlugin._sha(Path(executable)),
+            "trtexec_version": trtexec_version,
+            "cuda_device": "unavailable",
+            "cuda_compute_capability": "unavailable",
+            "cuda_runtime": "unavailable",
+            "tensorrt_python_version": "unavailable",
+            "driver_or_jetpack": "unavailable",
+        }
+        try:
+            import tensorrt as trt
+
+            result["tensorrt_python_version"] = str(trt.__version__)
+        except ImportError:
+            pass
+        try:
+            version = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                text=True,
+                capture_output=True,
+                timeout=5,
+            ).stdout.strip()
+            if version:
+                result["driver_or_jetpack"] = version
+            elif Path("/etc/nv_tegra_release").is_file():
+                result["driver_or_jetpack"] = Path("/etc/nv_tegra_release").read_text().strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(torch.cuda.current_device())
+                result.update(
+                    {
+                        "cuda_device": props.name,
+                        "cuda_compute_capability": f"{props.major}.{props.minor}",
+                        "cuda_runtime": str(torch.version.cuda),
+                    }
+                )
+        except (ImportError, RuntimeError):
+            pass
+        return result
+
+    @staticmethod
+    def _contract_from_artifact(artifact: PreparedArtifact) -> VisionContract:
+        value = dict(artifact.descriptors).get("contract_json")
+        if not value:
+            raise ValueError("TensorRT artifact lacks immutable contract descriptor")
+        return VisionContract.model_validate_json(value)
+
+    def build(self, captured, candidate, output=None):
+        raise RuntimeError("use BuildPlanner.materialize with a verified source, ONNX receipt, and VisionContract")
+
+    def prepare_materialized(self, materialized, captured_source, source, contract):
+        # Preserve TargetPlugin's receipt + source/lineage checks before doing
+        # any subprocess work.  Never accept an ONNX path alone here.
+        _verify_materialized_boundary(materialized, captured_source, contract)
+        if not source.verify_materialization(materialized, captured_source, contract):
+            raise ValueError("materialized ONNX lacks an in-process source receipt")
+        return self._prepare_from_materialized(materialized, captured_source, contract)
+
+    def _prepare_from_materialized(
+        self, materialized: MaterializedOnnx, captured: PreparedSource, contract: VisionContract
+    ) -> PreparedArtifact:
+        if self.engine_output is None:
+            raise ValueError("TensorRT target requires an explicit engine_output")
+        if contract.input.layout != "NCHW":
+            raise ValueError("TensorRT target requires an NCHW VisionContract")
+        if (
+            contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
+            or contract.result.box_format != "xyxy"
+            or contract.result.coordinate_space != "original_image"
+        ):
+            raise ValueError("TensorRT target supports original-image xyxy boxes/scores/classes or yolo_end2end only")
+        if contract.result.nms_owner not in self.capabilities.nms_owners:
+            raise ValueError("TensorRT target does not execute target/contract NMS")
+        declared_shapes = (contract.input.shape,) + tuple(item.shape for item in contract.raw_output.tensors)
+        if any(any(not isinstance(dim, int) for dim in shape) for shape in declared_shapes):
+            raise ValueError("TensorRT static target rejects symbolic/dynamic contract shapes")
+        output = self.engine_output
+        if output.exists() or output.is_symlink():
+            raise ValueError("TensorRT engine output must not already exist or be a symlink")
+        if output.suffix.lower() not in {".engine", ".plan"}:
+            raise ValueError("TensorRT engine_output must use .engine or .plan")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        # Snapshot verified ONNX bytes into a private, owned path before the
+        # builder subprocess; never hand it a mutable provider path.
+        if self._sha(materialized.lineage_path) != materialized.lineage_sha256:
+            raise ValueError("materialized ONNX lineage changed before TensorRT build")
+        lineage_body = json.loads(materialized.lineage_path.read_text())
+        with tempfile.NamedTemporaryFile(
+            dir=output.parent, prefix=".vision-buildkit-", suffix=".onnx", delete=False
+        ) as handle:
+            snapshot = Path(handle.name)
+            handle.write(materialized.material_path.read_bytes())
+            handle.flush()
+            os.fsync(handle.fileno())
+        if self._sha(snapshot) != materialized.sha256:
+            snapshot.unlink(missing_ok=True)
+            raise ValueError("materialized ONNX changed before TensorRT build")
+        from .backends import TensorRTBackend
+
+        try:
+            executable = TensorRTBackend.resolve_trtexec(self.trtexec_path)
+            executable_sha = self._sha(Path(executable))
+        except Exception:
+            snapshot.unlink(missing_ok=True)
+            raise
+        staged = output.parent / f".{output.name}.{secrets.token_hex(12)}.tmp"
+        log_path = output.with_suffix(output.suffix + ".build.log")
+        published_identity: tuple[int, int] | None = None
+
+        def remove_owned_publication() -> None:
+            if published_identity is None:
+                return
+            try:
+                current = output.stat(follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == published_identity:
+                    output.unlink()
+            except FileNotFoundError:
+                pass
+
+        if log_path.exists() or log_path.is_symlink():
+            snapshot.unlink(missing_ok=True)
+            raise ValueError("TensorRT build log output must not already exist or be a symlink")
+        request = type(
+            "TensorRTRequest",
+            (),
+            {
+                "precision": self.precision,
+                "calibration_cache_path": None,
+                "profiles": [],
+                "dynamic": False,
+                "trt_timeout_seconds": self.timeout_seconds,
+                "trtexec_path": executable,
+                "fp32_tactics_no_tf32": self.precision == "fp32",
+            },
+        )()
+        try:
+            _validate_onnx_contract(snapshot, contract)
+            built, command, logs, fingerprint = TensorRTBackend.build_atomic(snapshot, staged, request)
+            if built != staged or staged.is_symlink() or not staged.is_file() or staged.stat().st_size == 0:
+                raise RuntimeError("TensorRT builder returned an invalid staged engine")
+            # Only a redacted diagnostic digest is retained in the receipt.
+            with log_path.open("x", encoding="utf-8") as handle:
+                handle.write(self._redact_log(logs))
+                handle.flush()
+                os.fsync(handle.fileno())
+            staged_sha = self._sha(staged)
+            # link() is no-clobber publication, unlike os.replace().  It also
+            # makes the final name refer to the exact bytes we just hashed.
+            os.link(staged, output)
+            staged.unlink()
+            current = output.stat(follow_symlinks=False)
+            published_identity = (current.st_dev, current.st_ino)
+            if self._sha(output) != staged_sha:
+                raise RuntimeError("published TensorRT engine bytes changed during build")
+            if self._sha(Path(executable)) != executable_sha:
+                raise RuntimeError("trtexec executable changed during TensorRT build")
+        except Exception:
+            staged.unlink(missing_ok=True)
+            log_path.unlink(missing_ok=True)
+            remove_owned_publication()
+            raise
+        finally:
+            snapshot.unlink(missing_ok=True)
+        try:
+            engine_sha = self._sha(output)
+            log_sha = self._sha(log_path)
+            clean_log = log_path.read_text()
+            # The digest is self-contained in the descriptor; do not leave a
+            # relocatability-breaking sidecar with build-host diagnostics.
+            log_path.unlink()
+            trt_version = str(fingerprint.get("trtexec", ""))
+            if not trt_version:
+                raise RuntimeError("TensorRT builder did not report a version")
+            # Persist no user filesystem paths.  The canonical receipt is portable
+            # with an engine when copied into a capsule or registry.
+            redacted_command = self._redact_command(command)
+            if tuple(redacted_command) != self._expected_command(self.precision):
+                raise RuntimeError("TensorRT builder command contradicts certified static precision policy")
+            build_receipt = {
+                "schema": 1,
+                "source_plugin": materialized.plugin_id,
+                "source_plugin_version": materialized.plugin_version,
+                "target_plugin": self.plugin_id,
+                "target_plugin_version": self.plugin_version,
+                "source_sha256": captured.sha256,
+                "onnx_sha256": materialized.sha256,
+                "onnx_lineage": lineage_body,
+                "onnx_lineage_sha256": materialized.lineage_sha256,
+                "contract_json": contract.canonical_json(),
+                "engine_sha256": engine_sha,
+                "build_log_sha256": log_sha,
+                "build_log": clean_log,
+                "build_command": redacted_command,
+                "requested_precision": self.precision,
+                "effective_precision": "fp32_tactics_no_tf32" if self.precision == "fp32" else "mixed_fp16_fp32",
+                "dynamic": False,
+                "interface": {
+                    "input": {
+                        "name": contract.input.input_name,
+                        "shape": contract.input.shape,
+                        "dtype": contract.input.dtype,
+                    },
+                    "outputs": [item.model_dump(mode="json") for item in contract.raw_output.tensors],
+                },
+                "build_host": self._build_host_metadata(executable, trt_version),
+            }
+            token = secrets.token_urlsafe(32)
+            receipt_json = json.dumps(build_receipt, sort_keys=True, separators=(",", ":"))
+            self._artifact_receipts[token] = (
+                engine_sha,
+                contract.digest,
+                hashlib.sha256(receipt_json.encode()).hexdigest(),
+            )
+            descriptors = (
+                ("contract_json", contract.canonical_json()),
+                ("source_sha256", captured.sha256),
+                ("onnx_sha256", materialized.sha256),
+                ("engine_sha256", engine_sha),
+                ("build_log_sha256", log_sha),
+                ("build_receipt_json", receipt_json),
+                ("target_receipt", token),
+                ("requested_precision", self.precision),
+                ("effective_precision", "fp32_tactics_no_tf32" if self.precision == "fp32" else "mixed_fp16_fp32"),
+                ("dynamic", "false"),
+            )
+            return PreparedArtifact(
+                output, engine_sha, self.plugin_id, self.plugin_version, contract.digest, descriptors
+            )
+        except Exception:
+            remove_owned_publication()
+            log_path.unlink(missing_ok=True)
+            raise
+
+    def _prepare_onnx(self, source, materialized, contract):
+        raise RuntimeError("TensorRT target requires source receipt via prepare_materialized")
+
+    def verify_artifact(self, artifact: PreparedArtifact, contract: VisionContract) -> bool:
+        try:
+            if contract.input.layout != "NCHW":
+                return False
+            items = artifact.descriptors
+            values = dict(items)
+            required = {
+                "contract_json",
+                "source_sha256",
+                "onnx_sha256",
+                "engine_sha256",
+                "build_log_sha256",
+                "build_receipt_json",
+                "target_receipt",
+                "requested_precision",
+                "effective_precision",
+                "dynamic",
+            }
+            if len(values) != len(items) or set(values) != required:
+                return False
+            if artifact.material_path.is_symlink() or not artifact.material_path.is_file():
+                return False
+            receipt = json.loads(values["build_receipt_json"])
+            issued = self._artifact_receipts.get(values["target_receipt"])
+            if (
+                artifact.plugin_id != self.plugin_id
+                or artifact.plugin_version != self.plugin_version
+                or artifact.contract_digest != contract.digest
+                or values["contract_json"] != contract.canonical_json()
+                or values["source_sha256"] != contract.provenance.source_sha256
+                or not (self._sha(artifact.material_path) == artifact.sha256 == values["engine_sha256"])
+                or values["requested_precision"] not in {"fp32", "fp16"}
+                or values["effective_precision"]
+                != ("fp32_tactics_no_tf32" if values["requested_precision"] == "fp32" else "mixed_fp16_fp32")
+                or values["dynamic"] != "false"
+                or issued
+                != (
+                    values["engine_sha256"],
+                    contract.digest,
+                    hashlib.sha256(values["build_receipt_json"].encode()).hexdigest(),
+                )
+            ):
+                return False
+            return (
+                set(receipt)
+                == {
+                    "schema",
+                    "source_plugin",
+                    "source_plugin_version",
+                    "target_plugin",
+                    "target_plugin_version",
+                    "source_sha256",
+                    "onnx_sha256",
+                    "onnx_lineage",
+                    "onnx_lineage_sha256",
+                    "contract_json",
+                    "engine_sha256",
+                    "build_log_sha256",
+                    "build_log",
+                    "build_command",
+                    "requested_precision",
+                    "effective_precision",
+                    "dynamic",
+                    "interface",
+                    "build_host",
+                }
+                and receipt["schema"] == 1
+                and receipt["source_sha256"] == values["source_sha256"]
+                and receipt["source_plugin"] == receipt["onnx_lineage"]["source_plugin"]
+                and receipt["source_plugin_version"] == receipt["onnx_lineage"]["source_plugin_version"]
+                and receipt["target_plugin"] == self.plugin_id
+                and receipt["target_plugin_version"] == self.plugin_version
+                and receipt["onnx_sha256"] == values["onnx_sha256"]
+                and receipt["engine_sha256"] == values["engine_sha256"]
+                and receipt["build_log_sha256"] == values["build_log_sha256"]
+                and hashlib.sha256(receipt["build_log"].encode()).hexdigest() == values["build_log_sha256"]
+                and receipt["contract_json"] == contract.canonical_json()
+                and receipt["requested_precision"] == values["requested_precision"]
+                and receipt["effective_precision"] == values["effective_precision"]
+                and receipt["dynamic"] is False
+                and receipt["onnx_lineage"]
+                == {
+                    "schema": 1,
+                    "source_sha256": values["source_sha256"],
+                    "onnx_sha256": values["onnx_sha256"],
+                    "source_plugin": receipt["onnx_lineage"]["source_plugin"],
+                    "source_plugin_version": receipt["onnx_lineage"]["source_plugin_version"],
+                    "contract_digest": contract.digest,
+                }
+                and hashlib.sha256(
+                    json.dumps(receipt["onnx_lineage"], sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                == receipt["onnx_lineage_sha256"]
+                and receipt["interface"]["input"]
+                == {
+                    "name": contract.input.input_name,
+                    "shape": list(contract.input.shape),
+                    "dtype": contract.input.dtype,
+                }
+                and receipt["interface"]["outputs"]
+                == [item.model_dump(mode="json") for item in contract.raw_output.tensors]
+                and tuple(receipt["build_command"]) == self._expected_command(values["requested_precision"])
+                and set(receipt["build_host"])
+                >= {"os", "architecture", "builder_target", "trtexec_sha256", "trtexec_version"}
+                and all(receipt["build_host"][key] for key in receipt["build_host"])
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, KeyError):
+            return False
+
+    def prepare_input(self, artifact, sample, contract):
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("TensorRT artifact handle is not bound to verified material and contract")
+        return preprocess(contract, sample)
+
+    @staticmethod
+    def _runtime_provenance(runtime) -> dict[str, str]:
+        trt = getattr(runtime, "trt", None)
+        version = str(getattr(trt, "__version__", "unknown"))
+        metadata = {
+            "execution_provider": "TensorRTExecutionProvider",
+            "execution_device": "cuda",
+            "tensorrt_python_version": version,
+        }
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA unavailable")
+            props = torch.cuda.get_device_properties(torch.cuda.current_device())
+            metadata.update({"cuda_device": props.name, "cuda_compute_capability": f"{props.major}.{props.minor}"})
+        except Exception as exc:
+            raise RuntimeError("TensorRT target refuses non-CUDA execution") from exc
+        return metadata
+
+    def run(self, artifact, sample):
+        import numpy as np
+
+        if not isinstance(sample, PreparedInput):
+            raise ValueError("TensorRT target requires a contract PreparedInput")
+        contract = self._contract_from_artifact(artifact)
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("TensorRT artifact handle is not bound to verified material and contract")
+        if tuple(sample.tensor.shape) != tuple(contract.input.shape):
+            raise ValueError("TensorRT input shape contradicts the contract")
+        from .backends import TensorRTBackend
+
+        runtime = TensorRTBackend(str(artifact.material_path), input_name=contract.input.input_name)
+        if tuple(runtime.input_names) != (contract.input.input_name,) or tuple(runtime.output_names) != tuple(
+            item.name for item in contract.raw_output.tensors
+        ):
+            raise ValueError("TensorRT engine interface contradicts the contract")
+        expected_input = (tuple(contract.input.shape), contract.input.dtype)
+        if getattr(runtime, "input_specs", {}).get(contract.input.input_name) != expected_input:
+            raise ValueError("TensorRT engine input shape/dtype contradicts the contract")
+        expected_outputs = {item.name: (tuple(item.shape), item.dtype) for item in contract.raw_output.tensors}
+        if getattr(runtime, "output_specs", {}) != expected_outputs:
+            raise ValueError("TensorRT engine output shape/dtype contradicts the contract")
+        tensors = runtime.run(sample.tensor)
+        if set(tensors) != {item.name for item in contract.raw_output.tensors}:
+            raise ValueError("TensorRT runtime outputs contradict the contract")
+        for spec in contract.raw_output.tensors:
+            actual = np.asarray(tensors[spec.name])
+            if actual.ndim != len(spec.shape) or any(
+                isinstance(expected, int) and expected != observed
+                for expected, observed in zip(spec.shape, actual.shape, strict=True)
+            ):
+                raise ValueError(f"TensorRT output {spec.name!r} shape contradicts the contract")
+        metadata = self._runtime_provenance(runtime) | {"input_sha256": sample.input_sha256}
+        if contract.raw_output.semantics == "yolo_end2end":
+            if sample.trace is None:
+                raise ValueError("yolo_end2end requires geometry trace")
+            from .decoders import yolo_end2end_contract
+
+            result = yolo_end2end_contract(
+                tensors[contract.raw_output.tensors[0].name], sample.trace, contract, image_size=sample.image_size
+            )
+            result.metadata.update(metadata)
+            return result
+        roles = contract.raw_output.roles or {}
+        boxes = np.asarray(tensors[roles["boxes"]]).reshape(-1, 4)
+        scores = np.asarray(tensors[roles["scores"]]).reshape(-1)
+        classes = np.asarray(tensors[roles["classes"]]).reshape(-1)
+        if len(boxes) != len(scores) or len(boxes) != len(classes):
+            raise ValueError("TensorRT boxes/scores/classes output cardinality mismatch")
+        return DetectionResult(
+            [Box(*map(float, row)) for row in boxes],
+            [float(x) for x in scores],
+            [int(x) for x in classes],
+            {index: label for index, label in enumerate(contract.labels)},
+            sample.image_size,
+            metadata,
+        )
+
+
+class PluginRegistry:
+    def __init__(self):
+        self.sources: dict[str, SourceAdapter] = {}
+        self.targets: dict[str, TargetPlugin] = {}
+
+    def register_source(self, plugin: SourceAdapter) -> None:
+        self._register(self.sources, plugin, SourceAdapter)
+
+    def register_target(self, plugin: TargetPlugin) -> None:
+        self._register(self.targets, plugin, TargetPlugin)
+
+    @staticmethod
+    def _register(bucket, plugin, base):
+        if (
+            not isinstance(plugin, base)
+            or not getattr(plugin, "plugin_id", "")
+            or not getattr(plugin, "plugin_version", "")
+        ):
+            raise TypeError("plugin must implement stable plugin_id and plugin_version")
+        if plugin.plugin_id in bucket:
+            raise ValueError(f"plugin collision: {plugin.plugin_id}")
+        bucket[plugin.plugin_id] = plugin
+
+    def discover(self, group: str = "vision.buildkit.plugins") -> None:
+        entries = metadata.entry_points()
+        selected = entries.select(group=group) if hasattr(entries, "select") else entries.get(group, ())
+        sources, targets = dict(self.sources), dict(self.targets)
+        try:
+            for entry in sorted(selected, key=lambda e: e.name):
+                plugin = entry.load()()
+                if isinstance(plugin, SourceAdapter):
+                    self.register_source(plugin)
+                elif isinstance(plugin, TargetPlugin):
+                    self.register_target(plugin)
+                else:
+                    raise TypeError("entry point must create SourceAdapter or TargetPlugin")
+        except Exception:
+            self.sources, self.targets = sources, targets
+            raise
+
+
+def make_tensorrt_target(**config: Any) -> TensorRTTargetPlugin:
+    """Create a configured TensorRT target; there is deliberately no default."""
+    return TensorRTTargetPlugin(**config)
+
+
+DEFAULT_REGISTRY = PluginRegistry()
+DEFAULT_REGISTRY.register_source(PythonObjectSource())
+DEFAULT_REGISTRY.register_source(ManualOnnxSource())
+from .providers import LibreYoloSourceAdapter, UltralyticsSourceAdapter  # noqa: E402
+
+DEFAULT_REGISTRY.register_source(UltralyticsSourceAdapter())
+DEFAULT_REGISTRY.register_source(LibreYoloSourceAdapter())
+try:
+    metadata.version("onnxruntime")
+    DEFAULT_REGISTRY.register_target(OnnxRuntimeTargetPlugin())
+except metadata.PackageNotFoundError:
+    pass

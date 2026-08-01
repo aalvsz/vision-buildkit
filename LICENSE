@@ -1,0 +1,137 @@
+Vision BuildKit Research and Evaluation License 1.0
+
+Effective date: 30 July 2026
+Copyright (c) 2026 Ander Alvarez Sanz. All rights reserved.
+
+This is a source-available license. It is not an OSI-approved open-source
+license. This text is a license notice, not legal advice.
+
+1. Definitions
+
+"Software" means this repository and all source code, documentation, examples,
+and other materials distributed with this license.
+
+"Licensor" means Ander Alvarez Sanz.
+
+"You" means the individual or legal entity exercising rights under this
+license.
+
+"Non-Commercial Research Use" means personal study, education, academic
+research, benchmarking, evaluation, and experimentation that is not performed
+for commercial advantage, monetary compensation, internal business operations,
+or production deployment.
+
+"Production Use" means using the Software or a derivative in a live,
+customer-facing, operational, safety-critical, revenue-generating, or internal
+business workflow, other than an isolated evaluation environment.
+
+"Commercial Use" means use for commercial advantage, monetary compensation,
+or in connection with a business, including internal business operations,
+product development, customer work, hosted services, or paid services.
+
+2. Research license grant
+
+Subject to this license, the Licensor grants You a limited, worldwide,
+royalty-free, non-exclusive, non-transferable license to:
+
+a. access, run, reproduce, and modify the Software solely for Non-Commercial
+   Research Use; and
+b. fork and redistribute the Software or modified source versions solely for
+   Non-Commercial Research Use, provided that You preserve all copyright,
+   attribution, and license notices and distribute the complete corresponding
+   source under this same license without additional terms.
+
+No right is granted except as stated expressly in this section.
+
+3. Prohibited uses
+
+Without a separate written commercial license from the Licensor, You may not:
+
+a. use the Software or any derivative for Production Use;
+b. use it for Commercial Use, including paid services, internal business
+   operations, product development, customer work, or competitive commercial
+   advantage;
+c. sell, sublicense, rent, host, provide as a service, or otherwise monetize it;
+d. incorporate it into a commercial product, service, platform, model,
+   appliance, or deployment;
+e. remove or obscure attribution, copyright, or license notices; or
+f. represent that the Software is open source or endorsed by the Licensor.
+
+4. Patent restrictions and reservation
+
+No patent license is granted. The Licensor reserves all patent rights.
+
+As a condition of this license, You may not file, prosecute, acquire, enforce,
+fund, assist, or direct any patent or similar exclusive-right claim that is
+based on, derived from, or would cover the Software, its disclosed architecture
+or methods, or modifications made from the Software. Any such action terminates
+all rights granted to You under this license immediately.
+
+This restriction does not prevent publication of non-commercial academic
+research results or benchmark results with appropriate attribution. Nothing in
+this license represents a warranty that the restriction is enforceable in every
+jurisdiction or prevents independent invention, copying, or patent activity by
+persons who do not accept this license.
+
+5. Contributions
+
+If You intentionally submit a contribution to the Licensor for inclusion in
+the Software, You grant the Licensor a perpetual, worldwide, irrevocable,
+royalty-free, transferable and sublicensable license to use, reproduce, modify,
+distribute, publicly perform, publicly display, commercialize, and relicense
+that contribution for any purpose. You also grant the Licensor a perpetual,
+worldwide, royalty-free patent license for patent claims You control that are
+necessarily infringed by the contribution.
+
+You represent that You have the right to grant these permissions. Merely
+forking the repository does not constitute submitting a contribution.
+
+6. Attribution and research publication
+
+Research publications, presentations, demonstrations, and benchmark reports
+using the Software must identify "Vision BuildKit" and link to the canonical
+repository when reasonably possible. This permission does not authorize
+Production Use or commercial use.
+
+7. Third-party materials
+
+The Software may depend on or interoperate with third-party code, models,
+weights, datasets, and runtimes. Those materials remain governed by their own
+licenses and terms. This license grants no rights to them.
+
+8. Termination
+
+This license terminates automatically upon breach. On termination, You must
+stop using and distributing the Software and delete copies under Your control.
+Sections 4, 5, 7, 9, 10, and 11 survive termination. Rights are not reinstated
+without the Licensor's express written permission.
+
+9. No trademark rights
+
+No permission is granted to use the Licensor's names, trademarks, logos, or
+branding except for factual attribution required by this license.
+
+10. Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, AND NON-INFRINGEMENT. YOU ACCEPT ALL RISK ARISING FROM USE OF
+THE SOFTWARE.
+
+11. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR OTHER
+DAMAGES ARISING FROM THE SOFTWARE OR THIS LICENSE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES.
+
+12. General
+
+If any provision is unenforceable, it will be limited to the minimum extent
+necessary and the remaining provisions will continue in effect. This license
+is the entire agreement concerning the rights granted here. Any Commercial
+Use, Production Use, patent, or other use outside this license requires a
+separate written agreement signed by the Licensor. You should seek qualified
+legal counsel before relying on this license for a material use case.
+
+Commercial licensing inquiries: https://github.com/aalvsz
