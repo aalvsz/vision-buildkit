@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -14,11 +17,24 @@ def calibration_arrays(manifest: CalibrationManifest) -> Iterator[np.ndarray]:
     expected_dtype = np.dtype(manifest.dtype)
     for sample in manifest.samples:
         path = Path(sample.path)
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"calibration sample is not a regular file: {path}")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != sample.sha256:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise ValueError(f"calibration sample is not a regular file: {path}") from exc
+        try:
+            observed = os.fstat(descriptor)
+            if not stat.S_ISREG(observed.st_mode):
+                raise ValueError(f"calibration sample is not a regular file: {path}")
+            with os.fdopen(os.dup(descriptor), "rb") as handle:
+                payload = handle.read()
+        finally:
+            os.close(descriptor)
+        if hashlib.sha256(payload).hexdigest() != sample.sha256:
             raise ValueError(f"calibration sample digest mismatch: {path}")
-        array = np.load(path, allow_pickle=False)
+        # Decode the exact bytes whose digest was accepted.  Reopening the path
+        # here would permit a pathname replacement between verification and
+        # calibration.
+        array = np.load(io.BytesIO(payload), allow_pickle=False)
         if tuple(array.shape) != tuple(manifest.shape):
             raise ValueError(f"calibration sample shape mismatch: {path}")
         if array.dtype != expected_dtype:

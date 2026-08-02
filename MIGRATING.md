@@ -1,5 +1,37 @@
 # Migrating Vision BuildKit
 
+## 0.2.1 to 0.2.2
+
+The provider-neutral target boundary is unchanged. Version 0.2.2 adds
+`OpenVinoTargetPlugin`, which consumes only a sealed `NeutralOnnxRequest` and
+publishes a static CPU IR as an inseparable XML/BIN pair with a content-bound
+receipt.
+
+OpenVINO targets must be configured explicitly because the destination is part
+of the publication transaction:
+
+```python
+from vision import OpenVinoTargetPlugin
+
+target = OpenVinoTargetPlugin("artifacts/model.xml", precision="fp16")
+```
+
+Supported build precisions are FP32, FP16, and INT8. INT8 now requires a
+`CalibrationManifest` whose samples, shape, dtype, input name, preprocessing
+digest, and canonical digest match the Vision Contract. Existing manifests
+remain readable, but a caller-owned calibration object is copied into a frozen
+snapshot when the target is constructed.
+
+The OpenVINO receipt binds the neutral ONNX and lineage, contract, runtime
+version, effective precision, XML, BIN, and calibration identity. Treat all
+three published files (`.xml`, `.bin`, `.receipt.json`) as one artifact; moving
+or replacing only one member makes runtime verification fail.
+
+The public evidence in 0.2.2 is deliberately narrower than the API: YOLO26n
+FP32 and FP16 passed observed development validation on Apple CPU over ten
+frozen COCO images. INT8, RF-DETR, RT-DETR, TensorRT execution, and speedup
+claims remain outside that accepted evidence.
+
 ## 0.2.0 to 0.2.1
 
 `Resize` transforms now carry an explicit `implementation` discriminator. An

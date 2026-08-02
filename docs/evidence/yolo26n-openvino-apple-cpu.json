@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "evidence_kind": "observed_unsigned_development",
+  "publishable": false,
+  "certified": false,
+  "model": "YOLO26n",
+  "task": "object_detection",
+  "host": {
+    "architecture": "arm64",
+    "device": "Apple Silicon CPU",
+    "os": "macOS 26.3.1",
+    "runtime": "OpenVINO 2026.2.1 CPU"
+  },
+  "dataset": {
+    "name": "frozen COCO val2017 first-10 subset",
+    "images": 10,
+    "annotations": 97,
+    "derived_manifest_digest": "804a6f900ff8befb84a5952db7642ba5e44938a1fdb11366a131128ee6068aa2"
+  },
+  "gates": {
+    "maximum_map_drop": 0.002,
+    "minimum_detection_coverage": 0.98,
+    "maximum_score_delta": 0.1,
+    "maximum_class_mismatches": 0,
+    "high_confidence_threshold": 0.5
+  },
+  "metrics": {
+    "pytorch_reference": {
+      "map_50_95": 0.31727806187212126,
+      "detections": 57
+    },
+    "onnxruntime_fp32": {
+      "map_50_95": 0.31727806187212126,
+      "coverage": 1.0,
+      "matched": 57,
+      "lost": 0,
+      "added": 0
+    },
+    "openvino_fp32": {
+      "map_50_95": 0.3181397937595957,
+      "coverage": 0.9824561403508771,
+      "matched": 56,
+      "lost_low_confidence": 1,
+      "high_confidence_lost_or_added": 0,
+      "class_mismatches": 0,
+      "max_score_delta": 0.07081568241119385,
+      "mean_iou": 0.9921151973041642
+    },
+    "openvino_fp16": {
+      "map_50_95": 0.3181397937595957,
+      "coverage": 0.9824561403508771,
+      "matched": 56,
+      "lost_low_confidence": 1,
+      "high_confidence_lost_or_added": 0,
+      "class_mismatches": 0,
+      "max_score_delta": 0.07081568241119385,
+      "mean_iou": 0.9921151973041642
+    }
+  },
+  "bindings": {
+    "reviewed_execution_envelope_sha256": "f9205a68d9dbf9798ad1457d636b0f27e5279ff94c7fb823b1219500d1e1521a",
+    "runtime_tree_sha256": "37bdc313d4a274563efa54ff24644122d2b8c5ea6c6f4570e433fc12217640bb",
+    "results_sha256": "2a59b1dc933c370cbd3295d0554680f449e40d1ac505a184618cc0658f37be29",
+    "results_canonical_digest": "b07891b4d89b1db1419edd2c6769981554e8577fd0ba165f77793718d5fd7842",
+    "fp32_validation_report_sha256": "851cec95c61f75253546a868ac61e442eb711287cd59f3cfc2993060faa116f0",
+    "fp16_validation_report_sha256": "12ff065365615c40bfd4492b9366444df6683fc174d5b67ceaeadfca4ab3a64c",
+    "fp32_xml_sha256": "8510b426d57f755c97de1644558d9e4c8b7f4260731b9e943b3af277378593ab",
+    "fp32_bin_sha256": "bf790af05af71ec29551e533f54707fc55322e53f5c09176cd6dce422b3da9ac",
+    "fp16_xml_sha256": "28c622c98c890231bac4c262da64e98e0468d8dcf22f2b03a385e78b4fd3dafc",
+    "fp16_bin_sha256": "77f9da9a6330b130d21e7d9d2338b8f82f3541491c24566b80b4ff2852559b2d"
+  },
+  "non_claims": [
+    "Not a full-COCO accuracy result.",
+    "Not a speedup claim.",
+    "Not signed, publishable runtime-policy evidence, or certification.",
+    "Does not verify OpenVINO INT8, RF-DETR, or RT-DETR on a real model."
+  ]
+}

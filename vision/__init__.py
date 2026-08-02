@@ -9,10 +9,12 @@ from .manifest import VisionManifest
 from .optimization import optimize_search
 from .plugins import (
     MaterializedOnnx,
+    OpenVinoTargetPlugin,
     PluginRegistry,
     SourceAdapter,
     TargetPlugin,
     TensorRTTargetPlugin,
+    make_openvino_target,
     make_tensorrt_target,
 )
 from .providers import LibreYoloSourceAdapter, RFDetrSourceAdapter, UltralyticsSourceAdapter
@@ -35,6 +37,8 @@ __all__ = [
     "MaterializedOnnx",
     "TargetPlugin",
     "TensorRTTargetPlugin",
+    "OpenVinoTargetPlugin",
+    "make_openvino_target",
     "make_tensorrt_target",
     "UltralyticsSourceAdapter",
     "LibreYoloSourceAdapter",

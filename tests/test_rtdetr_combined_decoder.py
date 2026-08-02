@@ -35,6 +35,16 @@ def test_exact_decode_orders_deterministically_scales_and_keeps_overlaps():
     ]
 
 
+def test_frozen_v1_excludes_score_exactly_at_threshold():
+    tensor = _tensor()
+    tensor[0, 3] = [0.5, 0.5, 0.5, 0.5, 0.4, 0]
+
+    result = rtdetr_combined_v1(tensor, _trace(), 0.4, class_count=3)
+
+    assert result.classes == [1, 2, 0]
+    assert result.scores == pytest.approx([0.9, 0.9, 0.8])
+
+
 @pytest.mark.parametrize(
     "value",
     [

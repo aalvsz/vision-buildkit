@@ -154,7 +154,10 @@ def rtdetr_combined_v1(
     if np.any(classes != np.floor(classes)) or np.any(classes < 0) or np.any(classes >= class_count):
         raise ValueError("RT-DETR classes must be integral in-range indices")
     tw, th = trace.target
-    rows = [r for r in a if r[4] >= threshold]
+    # Match the frozen public Ultralytics score boundary: a detection at the
+    # configured threshold is excluded.  Keep this separate from the legacy
+    # decoder above, whose behavior is intentionally preserved.
+    rows = [r for r in a if r[4] > threshold]
     rows.sort(key=lambda r: (-float(r[4]), int(r[5]), *(float(value) for value in r[:4])))
     rows = rows[:max_detections]
     boxes = [
@@ -398,20 +401,27 @@ def rfdetr_contract_output(raw, image_size, contract):
         raise ValueError("RF-DETR contract must pin original-image xyxy results, threshold 0.30, and max 300")
     probabilities = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
     sparse_to_public = {category: index for index, category in enumerate(contract.coco_category_ids)}
-    # Deterministic global ranking: score descending, then source query, then
-    # sparse category id.  This makes ties independent of numpy sort details.
-    selected = []
+    # Match RF-DETR PostProcess ordering: sigmoid every one of the 91 class
+    # slots, select the global top 300 query/class pairs, then apply the score
+    # threshold and sparse COCO projection.  Forbidden sparse slots therefore
+    # consume top-k capacity; filtering them earlier would incorrectly promote
+    # lower-scoring public detections.  Query/category keys freeze tie behavior.
+    ranked = []
     for query in range(300):
         for sparse_id in range(91):
-            if sparse_id in RFDETR_FORBIDDEN_SPARSE_SLOTS or sparse_id not in sparse_to_public:
-                continue
             score = float(probabilities[0, query, sparse_id])
-            if score > contract.result.score_threshold:
-                selected.append((-score, query, sparse_id))
-    selected.sort()
+            ranked.append((-score, query, sparse_id))
+    ranked.sort()
+    selected = [
+        item
+        for item in ranked[: contract.result.max_detections]
+        if -item[0] > contract.result.score_threshold
+        and item[2] not in RFDETR_FORBIDDEN_SPARSE_SLOTS
+        and item[2] in sparse_to_public
+    ]
     width, height = image_size
     out_boxes, scores, classes = [], [], []
-    for negative_score, query, sparse_id in selected[:300]:
+    for negative_score, query, sparse_id in selected:
         cx, cy, bw, bh = (float(value) for value in boxes[0, query])
         x1, y1 = (cx - bw / 2) * width, (cy - bh / 2) * height
         x2, y2 = (cx + bw / 2) * width, (cy + bh / 2) * height

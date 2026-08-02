@@ -21,8 +21,8 @@ Vision BuildKit makes those facts explicit in a **Vision Contract**, then joins 
 source framework                         target runtime / device
 ----------------                         -----------------------
 Ultralytics ─┐                         ┌─ ONNX Runtime (current plugin)
-LibreYOLO ───┼─ SourceAdapter          ├─ TensorRT (implemented; hardware gate pending)
-custom ONNX ─┘       │                 ├─ OpenVINO (future plugin)
+LibreYOLO ───┼─ SourceAdapter          ├─ OpenVINO (current CPU plugin)
+custom ONNX ─┘       │                 ├─ TensorRT (implemented; hardware gate pending)
                        ▼                └─ other target plugins
                 Vision Contract
                        │
@@ -40,16 +40,19 @@ This table is deliberately narrower than the APIs and tests in the repository. �
 |---|---|---|
 | Source provider | **Verified** | Ultralytics YOLO26n native PyTorch reference |
 | Target | **Verified** | Static FP32 ONNX executed by ONNX Runtime `CPUExecutionProvider` |
+| OpenVINO | **Verified in a development scope** | YOLO26n CPU FP32 and FP16 on Apple Silicon; see the exact limitations below |
 | Dataset | **Verified** | 10 frozen COCO validation images, paired detections and COCO mAP |
 | Machines | **Verified** | Apple Silicon Mac and Intel Axelera host; both CPU runs |
 | Parity | **Verified in that scope** | mAP50–95 unchanged; no lost or added detections in the frozen subset |
 | Capsule | **Verified in that scope** | Content-bound capsule created, re-verified, and reloaded |
 | LibreYOLO | Experimental; not certified | A static FP32 LibreYOLO9t ONNX model ran with ONNX Runtime CPU on the held-out 10-image subset. Source and candidate mAP50–95 were both `0.435177`, but strict full-output parity failed: four low-score detections were lost and four were added. No LibreYOLO capsule was certified |
-| TensorRT, OpenVINO, FP16, INT8 | Not verified on hardware | Interfaces and/or implementation work may exist; no release claim is made here |
+| TensorRT and INT8 | Not verified on hardware | Interfaces and/or implementation work may exist; no release claim is made here |
 | RF-DETR and RT-DETR | Not verified | Not part of the accepted real-runtime evidence |
 | Jetson / accelerator execution | Not verified | No accepted Jetson or Axelera-Metis runtime result is claimed |
 
 The 10-image subset is a build/parity gate, **not** a full COCO accuracy claim, a speed claim, or a promise that any target hardware will work. Measurements are tied to the exact machine, artifact, runtime, input set, and harness.
+
+**OpenVINO — verified in this development scope.** YOLO26n OpenVINO CPU FP32 and FP16 both passed observed validation on Apple Silicon (macOS arm64) over the frozen 10-image COCO subset. Source mAP50–95 was `0.317278` and both candidates achieved `0.318140`; detection coverage was `56/57` (`0.982456`), with no high-confidence losses/additions or class mismatches. This evidence is unsigned, not certified, not a full-COCO result, and not a speedup claim. The content-bound summary is in [`docs/evidence/yolo26n-openvino-apple-cpu.json`](docs/evidence/yolo26n-openvino-apple-cpu.json).
 
 ## Install
 
@@ -61,19 +64,25 @@ cd vision-buildkit
 uv sync --extra yolo --extra onnx --extra validation
 ```
 
+Add the OpenVINO target and INT8 calibration dependencies when needed:
+
+```bash
+uv sync --extra yolo --extra openvino --extra validation
+```
+
 The distribution is `vision-buildkit`; the Python module and CLI are `vision`. Provider and backend dependencies are optional and imported only when needed.
 
-Version 0.2.1 makes resize implementations executable contract data rather
-than an implicit provider convention. Ultralytics RT-DETR uses exact OpenCV
-scale-fill semantics; the frozen RF-DETR Nano contract uses its exact
-torchvision resize path and distinguishes raw normalized `cxcywh` from public
-original-image `xyxy`. These paths are contract- and capsule-tested, but they
-are not listed as real-model verified until the paired experiments pass.
+Version 0.2.2 adds the provider-neutral OpenVINO CPU target for static FP32,
+FP16, and calibrated INT8 builds. It atomically publishes and re-verifies the
+IR XML/BIN pair plus its receipt, while preserving the Vision Contract across
+YOLO26, RF-DETR, and RT-DETR decoder ABIs. Only YOLO26n FP32/FP16 currently has
+accepted real-model OpenVINO development evidence; INT8 and the DETR families
+remain unverified on real models.
 
-Upgrading from 0.1.x or 0.2.0? Read [MIGRATING.md](MIGRATING.md) before updating
+Upgrading from 0.1.x, 0.2.0, or 0.2.1? Read [MIGRATING.md](MIGRATING.md) before updating
 custom plugins, manifests, or capsules. Version 0.2.0 sealed the
-provider-neutral target boundary; 0.2.1 adds exact resize semantics and a
-narrow compatibility path for existing 0.2.0 general-Resize capsules.
+provider-neutral target boundary; 0.2.1 added exact resize semantics; 0.2.2
+adds the sealed multi-file OpenVINO target.
 
 ## A small workflow
 
@@ -168,6 +177,28 @@ prepared, exported, artifact = BuildPlanner().materialize(
 ```
 
 This workflow is intentionally fail-closed: source bytes, contract, exported ONNX, lineage, and target artifact are checked at each boundary.
+
+For OpenVINO, configure the destination and precision explicitly. The target
+receives the same neutral ONNX request; it never receives the Ultralytics or
+LibreYOLO provider object:
+
+```python
+from vision import BuildPlanner, OpenVinoTargetPlugin
+from vision.plugins import DEFAULT_REGISTRY
+
+source = DEFAULT_REGISTRY.sources["ultralytics"]
+target = OpenVinoTargetPlugin("artifacts/model.xml", precision="fp16")
+
+captured, exported, artifact = BuildPlanner().materialize(
+    source, target, "yolo26n.pt", contract, "build/neutral.onnx"
+)
+assert target.verify_artifact(artifact, contract)
+```
+
+An OpenVINO artifact consists of `model.xml`, `model.bin`, and a bound receipt.
+FP32/FP16 require no calibration. INT8 requires an immutable
+`CalibrationManifest`; availability in the API is not a real-model INT8
+verification claim.
 
 `manual-onnx` can capture an existing ONNX file for planning and neutral materialization. It deliberately has no generic reference runner: a parity run still needs a source/runtime adapter that can execute the declared semantics.
 
