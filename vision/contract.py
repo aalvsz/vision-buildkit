@@ -23,7 +23,19 @@ class Resize(Strict):
     height: int = Field(gt=0)
     width: int = Field(gt=0)
     interpolation: Literal["nearest", "bilinear", "bicubic"]
+    # Omitted values preserve the schema-v1 PIL behavior.  Certified provider
+    # contracts must select their exact implementation explicitly.
+    implementation: Literal["pil", "opencv_linear_scale_fill", "torchvision_bilinear_antialias_false"] = Field(
+        default="pil", exclude_if=lambda value: value == "pil"
+    )
     invertible: Literal[True] = True
+
+    @model_validator(mode="after")
+    def v(self):
+        if self.implementation in {"opencv_linear_scale_fill", "torchvision_bilinear_antialias_false"}:
+            if self.interpolation != "bilinear":
+                raise ValueError(f"{self.implementation} requires bilinear interpolation")
+        return self
 
 
 class Letterbox(Strict):
@@ -221,6 +233,14 @@ class VisionContract(Strict):
                     or geometry.interpolation != "bilinear"
                 ):
                     raise ValueError("LibreYOLO YOLO9 letterbox requires top-left/int/min-ratio/linear semantics")
+            if self.raw_output.semantics == "rtdetr_combined":
+                if (
+                    not isinstance(geometry, Resize)
+                    or geometry.implementation != "opencv_linear_scale_fill"
+                    or geometry.interpolation != "bilinear"
+                    or self.preprocessing[0] is not geometry
+                ):
+                    raise ValueError("rtdetr_combined requires first-transform OpenCV INTER_LINEAR scale-fill resize")
         transposes = [item for item in self.preprocessing if isinstance(item, Transpose)]
         if len(transposes) > 1 or (transposes and self.preprocessing[-1] is not transposes[0]):
             raise ValueError("at most one transpose is supported and it must be final")

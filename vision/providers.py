@@ -488,7 +488,7 @@ class RFDetrSourceAdapter(SourceAdapter):
             or contract.raw_output.semantics != "custom"
             or contract.raw_output.decoder_plugin != "rfdetr.sigmoid_coco_v1"
             or observed_tensors != expected_tensors
-            or contract.result.box_format != "cxcywh"
+            or contract.result.box_format != "xyxy"
             or contract.result.coordinate_space != "original_image"
             or contract.result.nms_owner != "none"
             or contract.result.suppression != "none"
@@ -503,6 +503,7 @@ class RFDetrSourceAdapter(SourceAdapter):
             or len(contract.preprocessing) != 3
             or contract.preprocessing[0].kind != "resize"
             or contract.preprocessing[0].interpolation != "bilinear"
+            or contract.preprocessing[0].implementation != "torchvision_bilinear_antialias_false"
             or contract.preprocessing[1].kind != "normalize"
             or contract.preprocessing[1].mean != (0.485, 0.456, 0.406)
             or contract.preprocessing[1].std != (0.229, 0.224, 0.225)

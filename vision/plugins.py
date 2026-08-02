@@ -470,7 +470,7 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
         rfdetr_raw = (
             contract.raw_output.semantics == "custom"
             and contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
-            and contract.result.box_format == "cxcywh"
+            and contract.result.box_format == "xyxy"
         )
         rtdetr_raw = contract.raw_output.semantics == "rtdetr_combined"
         if rtdetr_raw and (

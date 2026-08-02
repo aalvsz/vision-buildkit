@@ -389,8 +389,13 @@ def rfdetr_contract_output(raw, image_size, contract):
         raise ValueError("RF-DETR raw tensors must be finite")
     if tuple(contract.coco_category_ids) != RFDETR_COCO_CATEGORY_IDS or tuple(contract.labels) != RFDETR_COCO_LABELS:
         raise ValueError("RF-DETR contract must declare the exact 80-class sparse COCO category mapping")
-    if contract.result.score_threshold != 0.30 or contract.result.max_detections != 300:
-        raise ValueError("RF-DETR contract must pin threshold 0.30 and max_detections 300")
+    if (
+        contract.result.box_format != "xyxy"
+        or contract.result.coordinate_space != "original_image"
+        or contract.result.score_threshold != 0.30
+        or contract.result.max_detections != 300
+    ):
+        raise ValueError("RF-DETR contract must pin original-image xyxy results, threshold 0.30, and max 300")
     probabilities = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
     sparse_to_public = {category: index for index, category in enumerate(contract.coco_category_ids)}
     # Deterministic global ranking: score descending, then source query, then

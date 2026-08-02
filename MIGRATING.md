@@ -1,5 +1,43 @@
 # Migrating Vision BuildKit
 
+## 0.2.0 to 0.2.1
+
+`Resize` transforms now carry an explicit `implementation` discriminator. An
+omitted value still means `pil`, preserving schema-v1 behavior for existing
+general contracts. Provider-certified contracts must be explicit:
+
+- RT-DETR combined v1 requires `opencv_linear_scale_fill` with bilinear
+  interpolation. This matches Ultralytics RT-DETR `LetterBox(...,
+  scale_fill=True)` and executes with OpenCV `INTER_LINEAR`.
+- RF-DETR requires `torchvision_bilinear_antialias_false`, which performs the
+  historical float `/255` conversion before `torch.nn.functional.interpolate`
+  with `align_corners=False` and `antialias=False`.
+
+The frozen RF-DETR contract now distinguishes its raw and public geometry:
+`dets` remains normalized `cxcywh` in the generated manifest, while
+`result.box_format` is `xyxy` in original-image coordinates after decoding.
+Only the exact `rfdetr.sigmoid_coco_v1` Nano ABI is certifiable; other `custom`
+decoder contracts remain rejected.
+
+Old RT-DETR contracts that omitted the discriminator used PIL resizing and are
+not certifiable as combined v1. Recreate the contract and rerun parity gates;
+do not edit an existing capsule or relax its thresholds.
+
+Certified 0.2.0 capsules with a general `Resize` contract remain verifiable.
+Those capsules omitted `implementation` from the embedded contract (meaning
+PIL at runtime) while their redundant top-level manifest projection named
+`opencv_linear_scale_fill`. The verifier accepts only that exact historical
+projection for `boxes_scores_classes` and `yolo_end2end`; execution continues
+to use embedded-contract PIL semantics. This exception does not apply to the
+strict RT-DETR combined or RF-DETR ABIs. New manifests project the declared
+implementation truthfully.
+
+The minimum supported Pydantic version is now 2.12.5 because canonical
+serialization relies on `Field(exclude_if=...)` to omit the default PIL
+discriminator while retaining nondefault implementations in contract digests.
+Earlier 2.12 patch releases emit nested-union serializer warnings for this
+otherwise valid omitted-field representation.
+
 ## 0.1.x to 0.2.0
 
 Version 0.2.0 changes the source-to-target plugin boundary so target plugins no

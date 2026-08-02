@@ -13,8 +13,9 @@ from vision.contract import VisionContract
 from vision.decoders import RTDETR_COMBINED_ABI
 from vision.manifest import VisionManifest, manifest_from_contract
 from vision.plugins import OnnxRuntimeTargetPlugin
-from vision.preprocess import PreparedInput
-from vision.processing import GeometryTrace
+from vision.preprocess import PreparedInput, preprocess
+from vision.processing import GeometryTrace, direct_resize
+from vision.types import Box
 
 
 def _sha(path):
@@ -53,7 +54,13 @@ def _contract(source_sha, *, clip_boxes=True, top_k=300):
                 "shape": [1, 3, 640, 640],
             },
             "preprocessing": [
-                {"kind": "resize", "height": 640, "width": 640, "interpolation": "bilinear"},
+                {
+                    "kind": "resize",
+                    "height": 640,
+                    "width": 640,
+                    "interpolation": "bilinear",
+                    "implementation": "opencv_linear_scale_fill",
+                },
                 {"kind": "normalize", "mean": [0, 0, 0], "std": [255, 255, 255]},
                 {"kind": "transpose", "order": [0, 3, 1, 2]},
             ],
@@ -110,6 +117,28 @@ def _runtime(output, *, output_shape=(1, 300, 6), output_type="tensor(float)"):
             return [output.copy()]
 
     return SimpleNamespace(InferenceSession=Session), sessions
+
+
+def _rtdetr_pixels(case):
+    if case == "odd_channels":
+        pixels = np.zeros((11, 17, 3), dtype=np.uint8)
+        rows, columns = np.indices(pixels.shape[:2])
+        pixels[..., 0] = columns * 13
+        pixels[..., 1] = rows * 19
+        pixels[..., 2] = (rows * 7 + columns * 11) % 256
+        return pixels
+    if case == "seeded_noise":
+        return np.random.default_rng(260801).integers(0, 256, size=(23, 37, 3), dtype=np.uint8)
+    if case == "sharp_edges":
+        pixels = np.zeros((19, 29, 3), dtype=np.uint8)
+        pixels[:, :14, 0] = 255
+        pixels[:9, :, 1] = 173
+        pixels[::2, ::3, 2] = 251
+        return pixels
+    if case == "identity":
+        rows, columns = np.indices((640, 640))
+        return np.stack((columns % 256, rows % 256, (rows ^ columns) % 256), axis=-1).astype(np.uint8)
+    raise AssertionError(case)
 
 
 def test_ort_target_prepares_and_runs_exact_rtdetr_contract_with_labels_clipping_and_metadata(monkeypatch, tmp_path):
@@ -182,6 +211,52 @@ def test_ort_target_rejects_nonfrozen_rtdetr_result_contract_before_session(monk
     with pytest.raises(ValueError, match="frozen NMS-free"):
         plugin.prepare(model, _contract(_sha(model), top_k=299))
     assert sessions == []
+
+
+def test_rtdetr_contract_preprocess_uses_direct_opencv_resize_with_exact_geometry(monkeypatch):
+    from PIL import Image
+
+    pixels = np.arange(5 * 7 * 3, dtype=np.uint8).reshape(5, 7, 3)
+    image = Image.fromarray(pixels, "RGB")
+    calls = []
+
+    def observed_direct_resize(value, target):
+        calls.append(target)
+        return direct_resize(value, target)
+
+    monkeypatch.setattr("vision.preprocess.direct_resize", observed_direct_resize)
+    prepared = preprocess(_contract("a" * 64), image)
+    resized, expected_trace = direct_resize(image, (640, 640))
+    expected = resized.astype(np.float32).transpose(2, 0, 1)[None] / 255.0
+
+    assert calls == [(640, 640)]
+    assert np.array_equal(prepared.tensor, expected)
+    assert prepared.trace == expected_trace
+
+
+@pytest.mark.parametrize("case", ["odd_channels", "seeded_noise", "sharp_edges", "identity"])
+def test_rtdetr_contract_preprocess_matches_ultralytics_scale_fill_tensor_and_geometry(case):
+    from PIL import Image
+
+    pytest.importorskip("ultralytics")
+    from ultralytics.data.augment import LetterBox
+
+    pixels = _rtdetr_pixels(case)
+    prepared = preprocess(_contract("a" * 64), Image.fromarray(pixels, "RGB"))
+    vendor_bgr = LetterBox((640, 640), auto=False, scale_fill=True)(image=pixels[..., ::-1])
+    expected = np.ascontiguousarray(vendor_bgr[..., ::-1].transpose(2, 0, 1)[None]).astype(np.float32) / 255.0
+
+    assert np.array_equal(prepared.tensor, expected)
+    height, width = pixels.shape[:2]
+    assert prepared.trace == GeometryTrace((width, height), (640, 640), 640 / width, 640 / height)
+    original = Box(1.0, 2.0, width - 2.0, height - 1.0)
+    model_space = Box(
+        original.x1 * prepared.trace.scale_x,
+        original.y1 * prepared.trace.scale_y,
+        original.x2 * prepared.trace.scale_x,
+        original.y2 * prepared.trace.scale_y,
+    )
+    assert prepared.trace.inverse(model_space).as_xyxy() == pytest.approx(original.as_xyxy())
 
 
 @pytest.mark.parametrize("clip_boxes", [True, False])

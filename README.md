@@ -63,10 +63,17 @@ uv sync --extra yolo --extra onnx --extra validation
 
 The distribution is `vision-buildkit`; the Python module and CLI are `vision`. Provider and backend dependencies are optional and imported only when needed.
 
-Upgrading a source or target plugin from 0.1.x? Version 0.2.0 introduces a
-sealed provider-neutral target boundary and an explicitly versioned RT-DETR
-decoder ABI. See the [0.2.0 migration guide](https://github.com/aalvsz/vision-buildkit/blob/v0.2.0/MIGRATING.md)
-before updating custom plugins or manifests.
+Version 0.2.1 makes resize implementations executable contract data rather
+than an implicit provider convention. Ultralytics RT-DETR uses exact OpenCV
+scale-fill semantics; the frozen RF-DETR Nano contract uses its exact
+torchvision resize path and distinguishes raw normalized `cxcywh` from public
+original-image `xyxy`. These paths are contract- and capsule-tested, but they
+are not listed as real-model verified until the paired experiments pass.
+
+Upgrading from 0.1.x or 0.2.0? Read [MIGRATING.md](MIGRATING.md) before updating
+custom plugins, manifests, or capsules. Version 0.2.0 sealed the
+provider-neutral target boundary; 0.2.1 adds exact resize semantics and a
+narrow compatibility path for existing 0.2.0 general-Resize capsules.
 
 ## A small workflow
 

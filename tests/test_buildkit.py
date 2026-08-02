@@ -6,9 +6,11 @@ from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from vision.adapters.onnx import OnnxAdapter
 from vision.buildkit import BuildPlanner
 from vision.capsule import RuntimeRequest, create_certified_capsule, select_runtime, verify_capsule
 from vision.cli import app
@@ -29,6 +31,7 @@ from vision.conformance import (
     conform,
 )
 from vision.contract import VisionContract
+from vision.decoders import RFDETR_COCO_CATEGORY_IDS, RFDETR_COCO_LABELS
 from vision.manifest import VisionManifest, manifest_from_contract
 from vision.plugins import (
     MaterializedOnnx,
@@ -138,6 +141,57 @@ def contract(source_digest, *, preprocessing=None):
             },
             "labels": ["person"],
             "coco_category_ids": [1],
+            "tolerances": {"box_iou": 0.9, "score_delta": 0.01},
+            "provenance": {"source": "synthetic", "source_sha256": source_digest},
+        }
+    )
+
+
+def rfdetr_contract(source_digest):
+    return VisionContract.model_validate(
+        {
+            "input": {
+                "color": "RGB",
+                "layout": "NCHW",
+                "dtype": "float32",
+                "input_name": "input",
+                "shape": [1, 3, 384, 384],
+            },
+            "preprocessing": [
+                {
+                    "kind": "resize",
+                    "height": 384,
+                    "width": 384,
+                    "interpolation": "bilinear",
+                    "implementation": "torchvision_bilinear_antialias_false",
+                },
+                {"kind": "normalize", "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+                {"kind": "transpose", "order": [0, 3, 1, 2]},
+            ],
+            "raw_output": {
+                "semantics": "custom",
+                "decoder_plugin": "rfdetr.sigmoid_coco_v1",
+                "tensors": [
+                    {"name": "dets", "dtype": "float32", "shape": [1, 300, 4]},
+                    {"name": "labels", "dtype": "float32", "shape": [1, 300, 91]},
+                ],
+            },
+            "result": {
+                "box_format": "xyxy",
+                "coordinate_space": "original_image",
+                "nms_owner": "none",
+                "nms_iou_threshold": None,
+                "score_threshold": 0.30,
+                "class_aware_nms": False,
+                "clip_boxes": True,
+                "top_k": 300,
+                "max_detections": 300,
+                "suppression": "none",
+                "ordering": "score_desc",
+                "tie_policy": "stable",
+            },
+            "labels": list(RFDETR_COCO_LABELS),
+            "coco_category_ids": list(RFDETR_COCO_CATEGORY_IDS),
             "tolerances": {"box_iou": 0.9, "score_delta": 0.01},
             "provenance": {"source": "synthetic", "source_sha256": source_digest},
         }
@@ -322,12 +376,12 @@ def files(
     return golden, runtime, accuracy, bundle
 
 
-def report(tmp_path, *, parity_schema_version=2, report_schema_version=2):
+def report(tmp_path, *, parity_schema_version=2, report_schema_version=2, preprocessing=None):
     source = tmp_path / "source.bin"
     source.write_bytes(b"source")
     artifact = tmp_path / "artifact.bin"
     artifact.write_bytes(b"artifact")
-    value = contract(sha(source))
+    value = contract(sha(source), preprocessing=preprocessing)
     golden, runtime, accuracy, bundle = files(
         tmp_path, sha(source), sha(artifact), parity_schema_version=parity_schema_version
     )
@@ -929,6 +983,159 @@ def test_certified_capsule_evidence_tamper_and_selection(tmp_path):
     evidence.write_bytes(b"tamper")
     with pytest.raises(ValueError):
         verify_capsule(root)
+
+
+def test_legacy_020_general_resize_capsule_verifies_but_tampered_projections_fail(tmp_path, monkeypatch):
+    """The 0.2.0 redundant OpenCV projection must not change embedded PIL execution."""
+    from PIL import Image
+
+    from vision.adapters.processor import DetectionProcessor
+    from vision.capsule import CapsuleIndex, _digest, _inventory, _write_json
+
+    transforms = [
+        {"kind": "resize", "height": 32, "width": 32, "interpolation": "bicubic"},
+        {"kind": "normalize", "mean": [0, 0, 0], "std": [255, 255, 255]},
+        {"kind": "transpose", "order": [0, 3, 1, 2]},
+    ]
+    source, artifact, value, result, _ = report(tmp_path, preprocessing=transforms)
+    root = create_certified_capsule(
+        tmp_path / "legacy-020.vcap",
+        VisionManifest(source=str(artifact)),
+        value,
+        result,
+        source=source,
+        artifact=artifact,
+    )
+
+    def reindex(capsule):
+        manifest = VisionManifest.from_yaml(capsule / "manifest.yaml")
+        index = CapsuleIndex.model_validate_json((capsule / "capsule.json").read_text())
+        body = index.model_dump(exclude={"capsule_id"}, mode="json") | {
+            "files": _inventory(capsule),
+            "manifest_digest": _digest(manifest.model_dump(mode="json")),
+        }
+        _write_json(capsule / "checksums.json", body["files"])
+        updated = CapsuleIndex(capsule_id=_digest(body), **body)
+        _write_json(capsule / "capsule.json", updated.model_dump(mode="json"))
+        return updated.capsule_id
+
+    current = VisionManifest.from_yaml(root / "manifest.yaml")
+    legacy_body = current.model_dump(mode="json")
+    assert "implementation" not in legacy_body["contract"]["preprocessing"][0]
+    legacy_body["preprocessing"].update(
+        {
+            "interpolation": "bilinear",
+            "implementation": "opencv_linear_scale_fill",
+        }
+    )
+    legacy = VisionManifest.model_validate(legacy_body)
+    legacy.to_yaml(root / "manifest.yaml")
+    legacy_id = reindex(root)
+    assert verify_capsule(root, expected_capsule_id=legacy_id).certification_status == "PASS"
+
+    def forbidden_opencv(*_args, **_kwargs):
+        raise AssertionError("legacy projection must not select OpenCV")
+
+    monkeypatch.setattr("vision.preprocess.direct_resize", forbidden_opencv)
+    tensor, trace = DetectionProcessor(legacy)(Image.new("RGB", (7, 5), (20, 30, 40)))
+    assert tensor.shape == (1, 3, 32, 32)
+    assert trace.target == (32, 32)
+
+    projection_tamper = tmp_path / "legacy-projection-tamper.vcap"
+    shutil.copytree(root, projection_tamper)
+    tampered = VisionManifest.from_yaml(projection_tamper / "manifest.yaml")
+    tampered_body = tampered.model_dump(mode="json")
+    tampered_body["preprocessing"]["normalization"] = "none"
+    VisionManifest.model_validate(tampered_body).to_yaml(projection_tamper / "manifest.yaml")
+    projection_id = reindex(projection_tamper)
+    with pytest.raises(ValueError, match="resize implementation|preprocessing projection"):
+        verify_capsule(projection_tamper, expected_capsule_id=projection_id)
+
+    embedded_tamper = tmp_path / "legacy-embedded-tamper.vcap"
+    shutil.copytree(root, embedded_tamper)
+    embedded = VisionManifest.from_yaml(embedded_tamper / "manifest.yaml")
+    embedded_body = embedded.model_dump(mode="json")
+    embedded_body["contract"]["preprocessing"][0]["implementation"] = "pil"
+    VisionManifest.model_validate(embedded_body).to_yaml(embedded_tamper / "manifest.yaml")
+    embedded_id = reindex(embedded_tamper)
+    with pytest.raises(ValueError, match="cannot exactly represent"):
+        verify_capsule(embedded_tamper, expected_capsule_id=embedded_id)
+
+
+def test_rfdetr_certified_capsule_projects_selects_and_decodes_without_vendor_weights(tmp_path):
+    source, artifact, _, baseline, _ = report(tmp_path)
+    value = rfdetr_contract(sha(source))
+    runtime = baseline.runtime.model_copy(
+        update={
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "resolution": (384, 384),
+        }
+    )
+    runtime_record_path = Path(baseline.evidence.runtime_record.path)
+    runtime_record = json.loads(runtime_record_path.read_text())
+    runtime_record.update(
+        {
+            "source_plugin": "rfdetr",
+            "target_plugin": "onnxruntime",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "resolution": [384, 384],
+        }
+    )
+    runtime_record_path.write_text(json.dumps(runtime_record, sort_keys=True, separators=(",", ":")))
+    evidence = baseline.evidence.model_copy(
+        update={"runtime_record": EvidenceFile(path=str(runtime_record_path), sha256=sha(runtime_record_path))}
+    )
+    certified = CertificationReport.trusted_create(
+        **(
+            baseline.model_dump(exclude={"digest"}, mode="json")
+            | {
+                "contract_digest": value.digest,
+                "source_plugin": "rfdetr",
+                "target_plugin": "onnxruntime",
+                "runtime": runtime,
+                "evidence": evidence,
+            }
+        )
+    )
+    root = create_certified_capsule(
+        tmp_path / "rfdetr.vcap",
+        VisionManifest(source=str(artifact)),
+        value,
+        certified,
+        source=source,
+        artifact=artifact,
+    )
+    index = verify_capsule(root, expected_capsule_id=capsule_id(root))
+    selection = select_runtime(
+        root,
+        RuntimeRequest(
+            backend="onnxruntime",
+            provider="CPUExecutionProvider",
+            resolution=(384, 384),
+            expected_capsule_id=index.capsule_id,
+        ),
+    )
+    assert selection.selected is not None
+    manifest = VisionManifest.from_yaml(root / "manifest.yaml")
+    assert manifest.decoder.kind == "rfdetr"
+    assert manifest.output.box_format == "cxcywh"
+    assert manifest.output.boxes_name == "dets" and manifest.output.logits_name == "labels"
+    assert manifest.preprocessing.implementation == "torchvision_bilinear_antialias_false"
+
+    adapter = OnnxAdapter(manifest)
+    adapter.engaged_providers = ["CPUExecutionProvider"]
+    adapter.input_name = "input"
+    adapter.output_names = {"dets", "labels"}
+    boxes = np.zeros((1, 300, 4), dtype=np.float32)
+    logits = np.full((1, 300, 91), -20.0, dtype=np.float32)
+    boxes[0, 0] = [0.5, 0.5, 1.0, 1.0]
+    logits[0, 0, 1] = 2.0
+    decoded = adapter.postprocess(({"dets": boxes, "labels": logits}, None), (10, 20))
+    assert decoded.boxes[0].as_xyxy() == pytest.approx([0, 0, 10, 20])
+    assert decoded.classes == [0]
+    assert decoded.names[0] == "person"
 
 
 def test_certified_capsule_is_relocatable_and_rejects_external_source_evidence(tmp_path):

@@ -13,6 +13,7 @@ from PIL import Image
 from vision.buildkit import BuildPlanner
 from vision.contract import VisionContract
 from vision.decoders import RFDETR_COCO_CATEGORY_IDS, RFDETR_COCO_LABELS, rfdetr_contract_output
+from vision.manifest import VisionManifest, manifest_from_contract, validate_contract_equivalence
 from vision.plugins import DEFAULT_REGISTRY, OnnxRuntimeTargetPlugin
 from vision.preprocess import preprocess
 from vision.providers import RFDetrSourceAdapter
@@ -22,7 +23,12 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _contract(digest):
+def _contract(
+    digest,
+    *,
+    resize_implementation="torchvision_bilinear_antialias_false",
+    decoder_plugin="rfdetr.sigmoid_coco_v1",
+):
     return VisionContract.model_validate(
         {
             "input": {
@@ -38,20 +44,21 @@ def _contract(digest):
                     "height": 384,
                     "width": 384,
                     "interpolation": "bilinear",
+                    "implementation": resize_implementation,
                 },
                 {"kind": "normalize", "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
                 {"kind": "transpose", "order": [0, 3, 1, 2]},
             ],
             "raw_output": {
                 "semantics": "custom",
-                "decoder_plugin": "rfdetr.sigmoid_coco_v1",
+                "decoder_plugin": decoder_plugin,
                 "tensors": [
                     {"name": "dets", "dtype": "float32", "shape": [1, 300, 4]},
                     {"name": "labels", "dtype": "float32", "shape": [1, 300, 91]},
                 ],
             },
             "result": {
-                "box_format": "cxcywh",
+                "box_format": "xyxy",
                 "coordinate_space": "original_image",
                 "nms_owner": "none",
                 "nms_iou_threshold": None,
@@ -236,6 +243,109 @@ def test_rfdetr_contract_preprocess_matches_tensor_bilinear_without_antialias():
         [0.229, 0.224, 0.225]
     ).view(1, 3, 1, 1)
     assert np.array_equal(actual, expected.numpy())
+
+
+def test_rfdetr_frozen_contract_manifest_round_trip_is_exact():
+    contract = _contract("0" * 64)
+    manifest = manifest_from_contract("model.onnx", contract)
+    assert manifest.decoder.kind == "rfdetr"
+    assert manifest.decoder.boxes_normalized is True
+    assert manifest.preprocessing.implementation == "torchvision_bilinear_antialias_false"
+    assert manifest.preprocessing.normalization == "1/255"
+    assert manifest.preprocessing.mean == [0.485, 0.456, 0.406]
+    assert manifest.preprocessing.std == [0.229, 0.224, 0.225]
+    assert manifest.output.boxes_name == "dets"
+    assert manifest.output.logits_name == "labels"
+    assert VisionManifest.model_validate(manifest.model_dump(mode="json")) == manifest
+    validate_contract_equivalence(manifest, contract)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda body: body["contract"]["raw_output"]["tensors"][1].update({"shape": [1, 299, 91]}),
+        lambda body: body["contract"]["result"].update({"score_threshold": 0.31}),
+        lambda body: body["contract"].update({"labels": list(reversed(body["contract"]["labels"]))}),
+    ],
+)
+def test_rfdetr_certified_manifest_rejects_embedded_contract_tampering(mutation):
+    body = manifest_from_contract("model.onnx", _contract("0" * 64)).model_dump(mode="json")
+    mutation(body)
+    with pytest.raises(ValueError, match="exact frozen RF-DETR Nano"):
+        VisionManifest.model_validate(body)
+
+
+def test_rfdetr_manifest_equivalence_rejects_projection_tampering():
+    contract = _contract("0" * 64)
+    body = manifest_from_contract("model.onnx", contract).model_dump(mode="json")
+    body["preprocessing"]["mean"][0] = 0.5
+    manifest = VisionManifest.model_validate(body)
+    with pytest.raises(ValueError, match="preprocessing projection"):
+        validate_contract_equivalence(manifest, contract)
+
+
+def test_rfdetr_rejects_raw_cxcywh_as_final_result_semantics_before_runtime(monkeypatch, tmp_path):
+    contract = _contract("0" * 64)
+    drifted = contract.model_copy(update={"result": contract.result.model_copy(update={"box_format": "cxcywh"})})
+    with pytest.raises(ValueError, match="original-image xyxy"):
+        rfdetr_contract_output(_raw(), (10, 20), drifted)
+    with pytest.raises(ValueError, match="cannot certify raw output semantics"):
+        manifest_from_contract("model.onnx", drifted)
+    model = tmp_path / "model.onnx"
+    _onnx(model)
+    sessions = []
+
+    class Runtime:
+        class InferenceSession:
+            def __init__(self, *_args, **_kwargs):
+                sessions.append(True)
+
+    plugin = OnnxRuntimeTargetPlugin()
+    monkeypatch.setattr(plugin, "_ort", lambda: Runtime)
+    with pytest.raises(ValueError, match="frozen RF-DETR/RT-DETR raw ABIs"):
+        plugin.prepare(
+            model,
+            drifted.model_copy(
+                update={"provenance": drifted.provenance.model_copy(update={"source_sha256": _sha(model)})}
+            ),
+        )
+    assert sessions == []
+
+
+def test_nonfrozen_custom_contract_remains_uncertifiable():
+    with pytest.raises(ValueError, match="cannot certify raw output semantics"):
+        manifest_from_contract("model.onnx", _contract("0" * 64, decoder_plugin="another.custom.decoder"))
+
+
+def test_torchvision_resize_execution_is_selected_by_transform_not_decoder_name():
+    import torch
+    import torch.nn.functional as functional
+
+    pixels = np.arange(5 * 7 * 3, dtype=np.uint8).reshape(5, 7, 3)
+    image = Image.fromarray(pixels, "RGB")
+    actual = preprocess(_contract("0" * 64, decoder_plugin="another.custom.decoder"), image).tensor
+    expected = torch.from_numpy(pixels.copy()).permute(2, 0, 1).unsqueeze(0).float().div_(255.0)
+    expected = functional.interpolate(expected, size=(384, 384), mode="bilinear", align_corners=False, antialias=False)
+    expected = (expected - torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)) / torch.tensor(
+        [0.229, 0.224, 0.225]
+    ).view(1, 3, 1, 1)
+    assert np.array_equal(actual, expected.numpy())
+
+
+def test_rfdetr_provider_rejects_non_torchvision_resize_before_vendor_load(monkeypatch, tmp_path):
+    checkpoint = tmp_path / "model.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    loaded = False
+
+    def forbidden_load(_path):
+        nonlocal loaded
+        loaded = True
+
+    adapter = RFDetrSourceAdapter()
+    monkeypatch.setattr(adapter, "_load", forbidden_load)
+    with pytest.raises(ValueError, match="exact fp32 static"):
+        adapter.capture(checkpoint, _contract(_sha(checkpoint), resize_implementation="opencv_linear_scale_fill"))
+    assert loaded is False
 
 
 def test_rfdetr_native_postprocessed_object_fails_closed(monkeypatch, tmp_path):

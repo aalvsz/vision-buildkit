@@ -2863,7 +2863,7 @@ wheels = [
 
 [[package]]
 name = "vision-buildkit"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2988,7 +2988,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10" },
     { name = "pycocotools", marker = "extra == 'metrics'", specifier = ">=2.0.7" },
     { name = "pycocotools", marker = "extra == 'validation'", specifier = ">=2.0.7" },
-    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6" },

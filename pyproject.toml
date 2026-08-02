@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vision-buildkit"
-version = "0.2.0"
+version = "0.2.1"
 description = "Research-only build, semantic validation, and packaging toolkit for portable object-detection artifacts"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -36,7 +36,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["numpy>=1.26", "pillow>=10", "pydantic>=2.7", "PyYAML>=6", "typer>=0.12", "fastapi>=0.111", "python-multipart>=0.0.9", "uvicorn>=0.30"]
+dependencies = ["numpy>=1.26", "pillow>=10", "pydantic>=2.12.5", "PyYAML>=6", "typer>=0.12", "fastapi>=0.111", "python-multipart>=0.0.9", "uvicorn>=0.30"]
 
 [project.urls]
 Homepage = "https://github.com/aalvsz/vision-buildkit"

@@ -30,9 +30,12 @@ class InputSpec(_Strict):
 class PreprocessingSpec(_Strict):
     resize: Literal["letterbox", "resize"] = "letterbox"
     padding: int = Field(default=114, ge=0, le=255)
-    interpolation: Literal["bilinear"] = "bilinear"
+    interpolation: Literal["nearest", "bilinear", "bicubic"] = "bilinear"
     implementation: Literal[
-        "ultralytics_letterbox_cv2", "opencv_linear_scale_fill", "torchvision_bilinear_antialias_false"
+        "pil",
+        "ultralytics_letterbox_cv2",
+        "opencv_linear_scale_fill",
+        "torchvision_bilinear_antialias_false",
     ] = "ultralytics_letterbox_cv2"
     normalization: Literal["1/255", "none"] = "1/255"
     mean: list[float] | None = None
@@ -46,12 +49,14 @@ class PreprocessingSpec(_Strict):
             raise ValueError("mean and std must contain three RGB channels")
         if self.std is not None and any(value == 0 for value in self.std):
             raise ValueError("std values must not be zero")
-        expected = {
-            "letterbox": "ultralytics_letterbox_cv2",
-            "resize": "opencv_linear_scale_fill" if self.mean is None else "torchvision_bilinear_antialias_false",
-        }[self.resize]
-        if self.implementation != expected:
-            raise ValueError(f"resize {self.resize} requires implementation {expected}")
+        if self.resize == "letterbox" and self.implementation not in {"pil", "ultralytics_letterbox_cv2"}:
+            raise ValueError("letterbox requires a PIL or Ultralytics CV2 implementation")
+        if self.resize == "resize" and self.implementation == "ultralytics_letterbox_cv2":
+            raise ValueError("resize cannot use ultralytics_letterbox_cv2")
+        if self.implementation != "pil" and self.interpolation != "bilinear":
+            raise ValueError(f"{self.implementation} requires bilinear interpolation")
+        if self.implementation == "torchvision_bilinear_antialias_false" and self.mean is None:
+            raise ValueError("torchvision resize requires explicit mean and std")
         return self
 
 
@@ -152,6 +157,8 @@ class VisionManifest(_Strict):
 
     @model_validator(mode="after")
     def _cross_validate(self) -> VisionManifest:
+        if self.preprocessing.implementation == "pil" and self.contract is None:
+            raise ValueError("PIL preprocessing is accepted only through an embedded VisionContract")
         if self.input.layout != "NCHW":
             raise ValueError("detection adapters currently require NCHW tensors")
         if self.family == "rfdetr" or self.decoder.kind == "rfdetr":
@@ -193,6 +200,15 @@ class VisionManifest(_Strict):
                 raise ValueError("rtdetr_combined_v1 requires an exact valid VisionContract") from error
             if certified.raw_output.semantics != "rtdetr_combined":
                 raise ValueError("rtdetr_combined_v1 requires an embedded RT-DETR VisionContract")
+        if self.decoder.kind == "rfdetr" and self.contract is not None:
+            from .contract import VisionContract
+
+            try:
+                certified = VisionContract.model_validate(self.contract)
+            except ValueError as error:
+                raise ValueError("rfdetr requires an exact valid VisionContract") from error
+            if not _is_certifiable_rfdetr_contract(certified):
+                raise ValueError("rfdetr requires the exact frozen RF-DETR Nano VisionContract")
         if self.decoder.kind == "rtdetr_combined" and self.contract is not None:
             raise ValueError("legacy rtdetr_combined manifests cannot carry a certified VisionContract")
         return self
@@ -203,6 +219,121 @@ class VisionManifest(_Strict):
 
     def to_yaml(self, path: str | Path) -> None:
         Path(path).write_text(yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False))
+
+
+def _is_certifiable_rfdetr_contract(contract) -> bool:
+    from .contract import Normalize, Resize, Transpose
+    from .decoders import RFDETR_COCO_CATEGORY_IDS, RFDETR_COCO_LABELS
+
+    preprocessing = contract.preprocessing
+    expected_tensors = (("dets", "float32", (1, 300, 4)), ("labels", "float32", (1, 300, 91)))
+    observed_tensors = tuple((item.name, item.dtype, item.shape) for item in contract.raw_output.tensors)
+    result = contract.result
+    return (
+        contract.task == "detection"
+        and (contract.input.color, contract.input.layout, contract.input.dtype) == ("RGB", "NCHW", "float32")
+        and contract.input.input_name == "input"
+        and contract.input.shape == (1, 3, 384, 384)
+        and len(preprocessing) == 3
+        and isinstance(preprocessing[0], Resize)
+        and preprocessing[0].height == 384
+        and preprocessing[0].width == 384
+        and preprocessing[0].interpolation == "bilinear"
+        and preprocessing[0].implementation == "torchvision_bilinear_antialias_false"
+        and isinstance(preprocessing[1], Normalize)
+        and preprocessing[1].mean == (0.485, 0.456, 0.406)
+        and preprocessing[1].std == (0.229, 0.224, 0.225)
+        and isinstance(preprocessing[2], Transpose)
+        and preprocessing[2].order == (0, 3, 1, 2)
+        and contract.raw_output.semantics == "custom"
+        and contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
+        and contract.raw_output.roles is None
+        and observed_tensors == expected_tensors
+        and result.fields == ("boxes", "scores", "classes")
+        and result.box_format == "xyxy"
+        and result.coordinate_space == "original_image"
+        and result.nms_owner == "none"
+        and result.nms_iou_threshold is None
+        and result.score_threshold == 0.30
+        and result.class_aware_nms is False
+        and result.clip_boxes is True
+        and result.top_k == 300
+        and result.max_detections == 300
+        and result.suppression == "none"
+        and result.ordering == "score_desc"
+        and result.tie_policy == "stable"
+        and tuple(contract.labels) == RFDETR_COCO_LABELS
+        and tuple(contract.coco_category_ids) == RFDETR_COCO_CATEGORY_IDS
+    )
+
+
+def _project_preprocessing(contract, geometry) -> dict:
+    from .contract import Letterbox, Normalize
+
+    normalizer = next((item for item in contract.preprocessing if isinstance(item, Normalize)), None)
+    unit_scaled = geometry.implementation == "torchvision_bilinear_antialias_false" or (
+        normalizer is not None and normalizer.mean == (0.0, 0.0, 0.0) and normalizer.std == (255.0, 255.0, 255.0)
+    )
+    projected = {
+        "resize": geometry.kind,
+        "padding": geometry.pad_value if isinstance(geometry, Letterbox) else 114,
+        "interpolation": geometry.interpolation,
+        "implementation": geometry.implementation,
+        "normalization": "1/255" if unit_scaled else "none",
+        "mean": None,
+        "std": None,
+    }
+    if normalizer is not None and normalizer.std != (255.0, 255.0, 255.0):
+        projected |= {"mean": list(normalizer.mean), "std": list(normalizer.std)}
+    return projected
+
+
+def _is_legacy_020_resize_projection(manifest: VisionManifest, contract, geometry) -> bool:
+    """Recognize only the redundant Resize projection emitted by version 0.2.0.
+
+    Certified runtime preprocessing is reconstructed from ``manifest.contract``.
+    Version 0.2.0 omitted the Resize implementation there (which means PIL), but
+    independently hard-coded OpenCV in the legacy top-level projection.  Keep
+    that historical capsule shape verifiable without broadening RT-DETR,
+    RF-DETR, or newly explicit contracts.
+    """
+    from .contract import Normalize, Resize
+
+    if (
+        not isinstance(geometry, Resize)
+        or geometry.implementation != "pil"
+        or contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
+        or _is_certifiable_rfdetr_contract(contract)
+        or not isinstance(manifest.contract, dict)
+    ):
+        return False
+    raw_preprocessing = manifest.contract.get("preprocessing")
+    if not isinstance(raw_preprocessing, list) or len(raw_preprocessing) != len(contract.preprocessing):
+        return False
+    geometry_indexes = [
+        index for index, transform in enumerate(contract.preprocessing) if isinstance(transform, Resize)
+    ]
+    if len(geometry_indexes) != 1:
+        return False
+    raw_geometry = raw_preprocessing[geometry_indexes[0]]
+    if not isinstance(raw_geometry, dict) or "implementation" in raw_geometry:
+        return False
+
+    normalizer = next((item for item in contract.preprocessing if isinstance(item, Normalize)), None)
+    legacy_projection = {
+        "resize": "resize",
+        "padding": 114,
+        "interpolation": "bilinear",
+        "implementation": "opencv_linear_scale_fill",
+        "normalization": (
+            "1/255"
+            if normalizer is not None and normalizer.mean == (0.0, 0.0, 0.0) and normalizer.std == (255.0, 255.0, 255.0)
+            else "none"
+        ),
+        "mean": None,
+        "std": None,
+    }
+    return manifest.preprocessing.model_dump(mode="json") == legacy_projection
 
 
 def validate_contract_equivalence(manifest: VisionManifest, contract) -> None:
@@ -228,19 +359,35 @@ def validate_contract_equivalence(manifest: VisionManifest, contract) -> None:
         raise ValueError("VisionContract requires explicit geometry")
     if manifest.preprocessing.resize != geometry.kind:
         raise ValueError("manifest resize contradicts VisionContract")
+    legacy_020_resize = _is_legacy_020_resize_projection(manifest, contract, geometry)
+    if not legacy_020_resize:
+        if manifest.preprocessing.implementation != geometry.implementation:
+            raise ValueError("manifest resize implementation contradicts VisionContract")
+        if manifest.preprocessing.model_dump(mode="json") != _project_preprocessing(contract, geometry):
+            raise ValueError("manifest preprocessing projection contradicts VisionContract")
     if isinstance(geometry, Letterbox) and manifest.preprocessing.padding != geometry.pad_value:
         raise ValueError("manifest letterbox padding contradicts VisionContract")
-    expected_box_format = "cxcywh" if contract.raw_output.semantics == "rtdetr_combined" else contract.result.box_format
+    rfdetr_contract = _is_certifiable_rfdetr_contract(contract)
+    expected_box_format = (
+        "cxcywh"
+        if contract.raw_output.semantics == "rtdetr_combined" or rfdetr_contract
+        else contract.result.box_format
+    )
     if manifest.output.box_format != expected_box_format:
         raise ValueError("manifest box format contradicts VisionContract")
     roles = contract.raw_output.roles or {}
     output_names = (manifest.output.boxes_name, manifest.output.scores_name, manifest.output.labels_name)
     required_names = (
-        (contract.raw_output.tensors[0].name, None, None)
-        if contract.raw_output.semantics in {"yolo_end2end", "rtdetr_combined"}
-        else (roles.get("boxes"), roles.get("scores"), roles.get("classes"))
+        ("dets", None, None)
+        if rfdetr_contract
+        else (
+            (contract.raw_output.tensors[0].name, None, None)
+            if contract.raw_output.semantics in {"yolo_end2end", "rtdetr_combined"}
+            else (roles.get("boxes"), roles.get("scores"), roles.get("classes"))
+        )
     )
-    if output_names != required_names or manifest.output.logits_name is not None:
+    expected_logits_name = "labels" if rfdetr_contract else None
+    if output_names != required_names or manifest.output.logits_name != expected_logits_name:
         raise ValueError("manifest output roles contradict VisionContract")
     decoder = manifest.decoder
     expected_decoder = {
@@ -248,6 +395,8 @@ def validate_contract_equivalence(manifest: VisionManifest, contract) -> None:
         "yolo_end2end": "yolo_end2end",
         "rtdetr_combined": "rtdetr_combined_v1",
     }.get(contract.raw_output.semantics)
+    if rfdetr_contract:
+        expected_decoder = "rfdetr"
     if expected_decoder is None:
         raise ValueError(f"VisionManifest cannot certify raw output semantics {contract.raw_output.semantics!r}")
     if decoder.kind != expected_decoder:
@@ -276,27 +425,18 @@ def manifest_from_contract(source: str, contract, *, family: str = "onnx") -> Vi
     from .contract import Letterbox, Resize
 
     geometry = next(item for item in contract.preprocessing if isinstance(item, (Resize, Letterbox)))
+    rfdetr_contract = _is_certifiable_rfdetr_contract(contract)
     decoder_kind = {
         "boxes_scores_classes": "boxes_scores_classes",
         "yolo_end2end": "yolo_end2end",
         "rtdetr_combined": "rtdetr_combined_v1",
     }.get(contract.raw_output.semantics)
+    if rfdetr_contract:
+        decoder_kind = "rfdetr"
     if decoder_kind is None:
         raise ValueError(f"VisionManifest cannot certify raw output semantics {contract.raw_output.semantics!r}")
     roles = contract.raw_output.roles or {}
-    preprocessing = {
-        "resize": geometry.kind,
-        "padding": geometry.pad_value if isinstance(geometry, Letterbox) else 114,
-        "implementation": "ultralytics_letterbox_cv2"
-        if isinstance(geometry, Letterbox)
-        else "opencv_linear_scale_fill",
-        "normalization": "1/255"
-        if any(
-            item.kind == "normalize" and item.mean == (0.0, 0.0, 0.0) and item.std == (255.0, 255.0, 255.0)
-            for item in contract.preprocessing
-        )
-        else "none",
-    }
+    preprocessing = _project_preprocessing(contract, geometry)
     value = VisionManifest(
         source=source,
         family=family,
@@ -309,16 +449,19 @@ def manifest_from_contract(source: str, contract, *, family: str = "onnx") -> Vi
         },
         output={
             "box_format": (
-                "cxcywh" if contract.raw_output.semantics == "rtdetr_combined" else contract.result.box_format
+                "cxcywh"
+                if contract.raw_output.semantics == "rtdetr_combined" or rfdetr_contract
+                else contract.result.box_format
             ),
-            "boxes_name": roles.get("boxes") or contract.raw_output.tensors[0].name,
+            "boxes_name": "dets" if rfdetr_contract else roles.get("boxes") or contract.raw_output.tensors[0].name,
             "scores_name": roles.get("scores"),
             "labels_name": roles.get("classes"),
+            "logits_name": "labels" if rfdetr_contract else None,
         },
         preprocessing=preprocessing,
         decoder={
             "kind": decoder_kind,
-            "boxes_normalized": contract.raw_output.semantics == "rtdetr_combined",
+            "boxes_normalized": contract.raw_output.semantics == "rtdetr_combined" or rfdetr_contract,
             "score_threshold": contract.result.score_threshold,
             "iou_threshold": contract.result.nms_iou_threshold or 0.45,
             "top_k": min(contract.result.top_k or contract.result.max_detections, contract.result.max_detections),

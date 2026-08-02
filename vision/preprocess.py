@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from .contract import VisionContract
-from .processing import GeometryTrace, letterbox, libreyolo_yolo9_letterbox
+from .processing import GeometryTrace, direct_resize, letterbox, libreyolo_yolo9_letterbox
 
 
 @dataclass(frozen=True)
@@ -48,8 +48,6 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
         image.load()
     image_size = image.size
     array = np.asarray(image.convert("RGB"))
-    rfdetr = contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
-    rfdetr_scaled = False
     transposed = False
     trace = GeometryTrace(image_size, image_size, 1.0, 1.0)
     for number, transform in enumerate(contract.preprocessing):
@@ -65,6 +63,9 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
             else:
                 array = array[..., ::-1]
         elif transform.kind in {"resize", "letterbox"}:
+            if transform.kind == "resize" and transform.implementation == "opencv_linear_scale_fill":
+                array, trace = direct_resize(Image.fromarray(array), (transform.width, transform.height))
+                continue
             if transform.kind == "letterbox" and transform.implementation == "ultralytics_letterbox_cv2":
                 if number != 0:
                     raise ValueError("ultralytics letterbox must be the first transform")
@@ -91,7 +92,7 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
                     image, (transform.width, transform.height), transform.pad_value
                 )
                 continue
-            if rfdetr and transform.kind == "resize":
+            if transform.kind == "resize" and transform.implementation == "torchvision_bilinear_antialias_false":
                 if transform.interpolation != "bilinear":
                     raise ValueError("torch tensor resize requires bilinear interpolation")
                 try:
@@ -105,7 +106,12 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
                     tensor, size=(height, width), mode="bilinear", align_corners=False, antialias=False
                 )
                 array = tensor.squeeze(0).permute(1, 2, 0).numpy()
-                rfdetr_scaled = True
+                trace = GeometryTrace(
+                    image_size,
+                    (width, height),
+                    width / image_size[0],
+                    height / image_size[1],
+                )
                 continue
             resample = {
                 "nearest": Image.Resampling.NEAREST,
@@ -115,6 +121,12 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
             height, width = transform.height, transform.width
             if transform.kind == "resize" or transform.scale == "exact":
                 array = np.asarray(Image.fromarray(array).resize((width, height), resample))
+                trace = GeometryTrace(
+                    image_size,
+                    (width, height),
+                    width / image_size[0],
+                    height / image_size[1],
+                )
             else:
                 scale = min(width / array.shape[1], height / array.shape[0])
                 rounder = int if transform.rounding == "floor" else lambda value: int(value + 0.5)
@@ -130,8 +142,6 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
                 array = canvas
         elif transform.kind == "normalize":
             array = array.astype(np.float32)
-            if rfdetr and not rfdetr_scaled:
-                array /= 255.0
             array = (array - np.asarray(transform.mean, dtype=np.float32)) / np.asarray(transform.std, dtype=np.float32)
         elif transform.kind == "transpose":
             if number != len(contract.preprocessing) - 1:
