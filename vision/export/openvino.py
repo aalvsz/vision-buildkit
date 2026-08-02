@@ -77,19 +77,33 @@ def build_openvino(source: Path, output: Path, precision: str, calibration: Cali
     saved = ov.Core().read_model(str(output))
     type_names = [str(port.get_element_type()).lower() for port in [*saved.inputs, *saved.outputs]]
     xml = output.read_text(errors="ignore").lower()
-    has_i8 = any(token in xml for token in ('precision="i8"', 'precision="u8"', 'type="i8"', 'type="u8"'))
-    has_fake_quantize = any(op.get_type_name() == "FakeQuantize" for op in saved.get_ops())
-    # Generic Convert is common in FP16 graphs; only FakeQuantize is unambiguously quantization here.
-    has_quant_ops = has_fake_quantize
+    operations = list(saved.get_ops())
+    fake_quantize_count = sum(op.get_type_name() == "FakeQuantize" for op in operations)
+    quantized_constant_count = sum(
+        op.get_type_name() == "Constant"
+        and any(
+            str(output.get_element_type()).lower() in {"<type: 'int8_t'>", "<type: 'uint8_t'>"}
+            for output in op.outputs()
+        )
+        for op in operations
+    )
+    # Integer result tensors and ordinary integer constants are valid in FP32
+    # detectors (for example class IDs).  NNCF PTQ is accepted only when the
+    # saved IR contains both calibrated FakeQuantize structure and quantized
+    # constants; incidental i8/u8 types alone are not precision evidence.
+    has_fake_quantize = fake_quantize_count > 0
+    has_quant_ops = has_fake_quantize and quantized_constant_count > 0
     has_f16 = "f16" in xml or any("f16" in name for name in type_names)
     inspection = {
         "io_element_types": type_names,
         "fake_quantize": has_fake_quantize,
         "quantization_ops": has_quant_ops,
-        "int8_constants": has_i8,
+        "fake_quantize_count": fake_quantize_count,
+        "quantized_constant_count": quantized_constant_count,
+        "int8_constants": quantized_constant_count > 0,
         "f16_tensors": has_f16,
     }
-    effective = "int8" if has_fake_quantize or has_quant_ops or has_i8 else "fp16" if has_f16 else "fp32"
+    effective = "int8" if has_quant_ops else "fp16" if has_f16 else "fp32"
     if effective != precision:
         raise RuntimeError(f"OpenVINO IR inspection found {effective}, requested {precision}: {inspection}")
     metadata = {

@@ -89,16 +89,20 @@ class DecoderSpec(_Strict):
 
 
 class CalibrationSample(_Strict):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     path: str
     sha256: str
 
 
 class CalibrationManifest(_Strict):
-    samples: list[CalibrationSample] = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    samples: tuple[CalibrationSample, ...] = Field(min_length=1)
     sample_count: int = Field(gt=0)
     preprocessing_digest: str = Field(min_length=1)
     input_name: str = Field(min_length=1)
-    shape: list[int] = Field(min_length=1)
+    shape: tuple[int, ...] = Field(min_length=1)
     dtype: Literal["float32", "float16"] = "float32"
     digest: str = Field(min_length=64, max_length=64)
 

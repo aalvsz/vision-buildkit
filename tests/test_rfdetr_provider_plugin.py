@@ -230,6 +230,20 @@ def test_rfdetr_raw_decoder_rejects_wrong_or_nonfinite_abi(bad):
         rfdetr_contract_output(bad(_raw()), (10, 20), _contract("0" * 64))
 
 
+def test_rfdetr_global_top300_keeps_forbidden_slots_from_promoting_lower_public_detection():
+    boxes = np.zeros((1, 300, 4), np.float32)
+    logits = np.full((1, 300, 91), -20, np.float32)
+    forbidden = sorted(set(range(91)) - set(RFDETR_COCO_CATEGORY_IDS))
+    for flat_index in range(300):
+        query, offset = divmod(flat_index, len(forbidden))
+        logits[0, query, forbidden[offset]] = 10.0 - flat_index * 1e-4
+    logits[0, 299, RFDETR_COCO_CATEGORY_IDS[0]] = 5.0
+    result = rfdetr_contract_output({"dets": boxes, "labels": logits}, (10, 20), _contract("0" * 64))
+    assert result.boxes == []
+    assert result.scores == []
+    assert result.classes == []
+
+
 def test_rfdetr_contract_preprocess_matches_tensor_bilinear_without_antialias():
     import torch
     import torch.nn.functional as functional

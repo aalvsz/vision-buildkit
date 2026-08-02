@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vision-buildkit"
-version = "0.2.1"
+version = "0.2.2"
 description = "Research-only build, semantic validation, and packaging toolkit for portable object-detection artifacts"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -69,6 +69,7 @@ packages = ["vision"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "/docs",
     "/vision",
     "/tests",
     "/scripts",

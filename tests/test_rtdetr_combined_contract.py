@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 
+import numpy as np
 import pytest
 
 from vision.contract import VisionContract
+from vision.decoders import rtdetr_combined_v1_contract
 from vision.manifest import VisionManifest, manifest_from_contract, validate_contract_equivalence
+from vision.processing import GeometryTrace
 
 
 def _contract(
@@ -73,6 +76,19 @@ def test_rtdetr_combined_manifest_round_trip_is_exact_and_truthful():
     assert manifest.output.boxes_name == "output0"
     assert VisionManifest.model_validate(manifest.model_dump(mode="json")) == manifest
     validate_contract_equivalence(manifest, contract)
+
+
+def test_contract_decoder_excludes_score_exactly_at_threshold():
+    raw = np.zeros((1, 300, 6), dtype=np.float32)
+    raw[0, :, 4] = 0.1
+    raw[0, 0] = [0.5, 0.5, 0.5, 0.5, 0.4, 0]
+    raw[0, 1] = [0.5, 0.5, 0.5, 0.5, 0.40000004, 0]
+    result = rtdetr_combined_v1_contract(
+        raw,
+        GeometryTrace(original=(640, 640), target=(640, 640), scale_x=1.0, scale_y=1.0),
+        _contract(),
+    )
+    assert result.scores == pytest.approx([0.40000004])
 
 
 @pytest.mark.parametrize(

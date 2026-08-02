@@ -9,7 +9,9 @@ import os
 import platform
 import re
 import secrets
+import stat
 import subprocess
+import sys
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .contract import Strict, VisionContract
+from .manifest import CalibrationManifest
 from .preprocess import PreparedInput, preprocess
 from .types import Box, DetectionResult
 
@@ -787,6 +790,704 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
         return preprocess(contract, sample)
 
 
+class OpenVinoTargetPlugin(TargetPlugin):
+    """Neutral ONNX -> OpenVINO CPU target with sealed IR publication."""
+
+    plugin_id = "openvino"
+    capabilities = Capabilities(
+        precisions=frozenset({"fp32", "fp16", "int8"}),
+        modes=frozenset({"static"}),
+        nms_owners=frozenset({"none", "source"}),
+    )
+    _configuration_fields = frozenset({"output", "precision", "calibration"})
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_configuration_sealed", False) and name in self._configuration_fields:
+            raise AttributeError(f"OpenVINO target configuration is immutable: {name}")
+        super().__setattr__(name, value)
+
+    def __init__(self, output: str | Path, precision: str = "fp32", calibration: CalibrationManifest | None = None):
+        self.output = Path(output)
+        self.precision = precision
+        # Own a deep, revalidated, immutable snapshot.  Receipt binding and
+        # quantization must never observe caller mutations after construction.
+        self.calibration = (
+            CalibrationManifest.model_validate(calibration.model_dump(mode="json")) if calibration is not None else None
+        )
+        if self.output.suffix.lower() != ".xml":
+            raise ValueError("OpenVINO target requires an explicit .xml output path")
+        if precision not in self.capabilities.precisions:
+            raise ValueError("OpenVINO precision must be fp32, fp16, or int8")
+        if precision == "int8" and calibration is None:
+            raise ValueError("OpenVINO INT8 requires CalibrationManifest")
+        self._artifact_receipts: dict[str, tuple[str, ...]] = {}
+        self._configuration_sealed = True
+
+    @property
+    def plugin_version(self) -> str:
+        try:
+            return metadata.version("openvino")
+        except metadata.PackageNotFoundError:
+            return "unavailable"
+
+    @staticmethod
+    def _ov():
+        try:
+            import openvino as ov
+        except ImportError as exc:
+            raise RuntimeError("openvino target unavailable; install vision-buildkit[openvino]") from exc
+        return ov
+
+    def build(self, captured: Any, candidate: Any, output: Path | None = None) -> PreparedArtifact:
+        if not isinstance(candidate, NeutralOnnxRequest):
+            raise TypeError("OpenVINO target requires exactly one sealed NeutralOnnxRequest")
+        return self.prepare_materialized(candidate)
+
+    @staticmethod
+    def _fsync_file(path: Path) -> None:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _identity_at(directory_fd: int, name: str) -> tuple[int, int]:
+        observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISREG(observed.st_mode):
+            raise RuntimeError(f"OpenVINO staged member is not a regular file: {name}")
+        return observed.st_dev, observed.st_ino
+
+    @staticmethod
+    def _sha_at(directory_fd: int, name: str) -> str:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        try:
+            digest = hashlib.sha256()
+            with os.fdopen(os.dup(descriptor), "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _fsync_at(directory_fd: int, name: str) -> None:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _directory_identity(path: Path, *, message: str) -> tuple[int, int]:
+        observed = path.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(observed.st_mode) or path.is_symlink():
+            raise RuntimeError(message)
+        return observed.st_dev, observed.st_ino
+
+    @staticmethod
+    def _directory_identity_at(directory_fd: int, name: str) -> tuple[int, int]:
+        observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(observed.st_mode):
+            raise RuntimeError("OpenVINO private stage identity changed")
+        return observed.st_dev, observed.st_ino
+
+    @staticmethod
+    def _entry_exists_at(directory_fd: int, name: str) -> bool:
+        try:
+            os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        return True
+
+    @classmethod
+    def _assert_parent_path(cls, path: Path, expected: tuple[int, int]) -> None:
+        try:
+            observed = cls._directory_identity(path, message="OpenVINO output parent identity changed")
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            raise RuntimeError("OpenVINO output parent identity changed") from exc
+        if observed != expected:
+            raise RuntimeError("OpenVINO output parent identity changed")
+
+    @classmethod
+    def _fsync_public_at(cls, parent_fd: int, name: str) -> None:
+        cls._fsync_at(parent_fd, name)
+
+    @staticmethod
+    def _fsync_parent(parent_fd: int) -> None:
+        os.fsync(parent_fd)
+
+    @staticmethod
+    def _fsync_stage(stage_fd: int) -> None:
+        os.fsync(stage_fd)
+
+    @staticmethod
+    def _validate_detection_semantics(contract: VisionContract) -> tuple[bool, bool]:
+        rfdetr_raw = (
+            contract.raw_output.semantics == "custom"
+            and contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
+            and contract.result.box_format == "xyxy"
+        )
+        rtdetr_raw = contract.raw_output.semantics == "rtdetr_combined"
+        if rtdetr_raw and (
+            contract.result.box_format != "xyxy"
+            or contract.result.coordinate_space != "original_image"
+            or contract.result.nms_owner != "none"
+            or contract.result.suppression != "none"
+            or contract.result.ordering != "score_desc"
+            or contract.result.tie_policy != "class_then_box"
+            or contract.result.top_k != 300
+            or contract.result.max_detections != 300
+        ):
+            raise ValueError("OpenVINO RT-DETR result contract contradicts the frozen NMS-free semantics")
+        if (
+            (
+                contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
+                or contract.result.box_format != "xyxy"
+            )
+            and not rfdetr_raw
+            and not rtdetr_raw
+        ):
+            raise ValueError("OpenVINO target supports only the frozen detection decoder contracts")
+        if contract.result.coordinate_space != "original_image":
+            raise ValueError("OpenVINO target requires original_image coordinate semantics")
+        if contract.result.nms_owner not in OpenVinoTargetPlugin.capabilities.nms_owners:
+            raise ValueError("OpenVINO target does not execute target/contract NMS")
+        if rfdetr_raw and tuple((item.name, item.dtype, item.shape) for item in contract.raw_output.tensors) != (
+            ("dets", "float32", (1, 300, 4)),
+            ("labels", "float32", (1, 300, 91)),
+        ):
+            raise ValueError("OpenVINO RF-DETR output contract does not match the frozen raw ABI")
+        if rtdetr_raw and tuple((item.name, item.dtype, item.shape) for item in contract.raw_output.tensors) != (
+            ("output0", "float32", (1, 300, 6)),
+        ):
+            raise ValueError("OpenVINO RT-DETR output contract does not match the frozen raw ABI")
+        return rfdetr_raw, rtdetr_raw
+
+    @staticmethod
+    def _preprocessing_digest(contract: VisionContract) -> str:
+        preprocessing = contract.model_dump(mode="json")["preprocessing"]
+        return hashlib.sha256(json.dumps(preprocessing, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    @classmethod
+    def _calibration_binding_for(
+        cls,
+        contract: VisionContract,
+        precision: str,
+        calibration: CalibrationManifest | None,
+    ) -> dict[str, str] | None:
+        if precision != "int8":
+            if calibration is not None:
+                raise ValueError("OpenVINO calibration is accepted only for INT8")
+            return None
+        if calibration is None:
+            raise ValueError("OpenVINO INT8 requires CalibrationManifest")
+        if calibration.digest != calibration.canonical_digest():
+            raise ValueError("OpenVINO calibration manifest digest changed after validation")
+        preprocessing_digest = cls._preprocessing_digest(contract)
+        if (
+            calibration.input_name != contract.input.input_name
+            or tuple(calibration.shape) != tuple(contract.input.shape)
+            or calibration.dtype != contract.input.dtype
+            or calibration.preprocessing_digest != preprocessing_digest
+        ):
+            raise ValueError("OpenVINO INT8 calibration manifest contradicts contract input/preprocessing")
+        return {"digest": calibration.digest, "preprocessing_digest": preprocessing_digest}
+
+    def _calibration_binding(self, contract: VisionContract) -> dict[str, str] | None:
+        return self._calibration_binding_for(contract, self.precision, self.calibration)
+
+    def _prepare_onnx(self, source: Path, materialized: MaterializedOnnx, contract: VisionContract) -> PreparedArtifact:
+        if self.output.suffix.lower() != ".xml":
+            raise ValueError("OpenVINO target requires an explicit .xml output path")
+        if any(
+            path.exists() or path.is_symlink()
+            for path in (self.output, self.output.with_suffix(".bin"), self.output.with_suffix(".receipt.json"))
+        ):
+            raise FileExistsError("OpenVINO output XML/BIN/receipt paths must be absent")
+        _validate_onnx_contract(source, contract)
+        self._validate_detection_semantics(contract)
+        if contract.raw_output.semantics == "yolo_end2end":
+            OnnxRuntimeTargetPlugin._validate_optional_ultralytics_metadata(source, contract)
+        _verify_materialized_onnx(materialized, contract)
+        # Freeze one configuration view for the complete transaction.  Do not
+        # dereference mutable target state again during conversion.
+        precision = self.precision
+        calibration = self.calibration
+        calibration_binding = self._calibration_binding_for(contract, precision, calibration)
+        parent = self.output.parent
+        try:
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise ValueError("OpenVINO output parent must be an existing regular directory") from exc
+        parent_stat = os.fstat(parent_fd)
+        parent_identity = (parent_stat.st_dev, parent_stat.st_ino)
+        stage_name = f".{self.output.stem}.openvino-{secrets.token_hex(8)}"
+        stage = parent / stage_name
+        owned_stage_members: dict[str, tuple[int, int]] = {}
+        created: list[tuple[str, tuple[int, int]]] = []
+        snapshot_cleanup_fd: int | None = None
+        stage_fd: int | None = None
+        publication: tuple[dict[str, Any], str, str] | None = None
+        artifact_token: str | None = None
+        source_snapshot_name = ".verified-source.onnx"
+
+        def stage_is_owned() -> bool:
+            try:
+                return self._directory_identity_at(parent_fd, stage_name) == stage_identity
+            except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError):
+                return False
+
+        def rollback_publication() -> None:
+            for name, identity in reversed(created):
+                try:
+                    if self._identity_at(parent_fd, name) == identity:
+                        os.unlink(name, dir_fd=parent_fd)
+                except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError):
+                    pass
+            try:
+                self._fsync_parent(parent_fd)
+            except OSError:
+                pass
+
+        try:
+            self._assert_parent_path(parent, parent_identity)
+            os.mkdir(stage_name, 0o700, dir_fd=parent_fd)
+            stage_identity = self._directory_identity_at(parent_fd, stage_name)
+            stage_fd = os.open(stage_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            source_bytes = materialized.material_path.read_bytes()
+            if hashlib.sha256(source_bytes).hexdigest() != materialized.sha256:
+                raise ValueError("materialized ONNX changed before OpenVINO snapshot")
+            snapshot_fd = os.open(
+                source_snapshot_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=stage_fd,
+            )
+            try:
+                snapshot_stat = os.fstat(snapshot_fd)
+                if not stat.S_ISREG(snapshot_stat.st_mode):
+                    raise RuntimeError("OpenVINO source snapshot is not a regular file")
+                owned_stage_members[source_snapshot_name] = (snapshot_stat.st_dev, snapshot_stat.st_ino)
+                snapshot_cleanup_fd = os.dup(snapshot_fd)
+                with os.fdopen(os.dup(snapshot_fd), "wb") as handle:
+                    handle.write(source_bytes)
+                    handle.flush()
+                os.fsync(snapshot_fd)
+            finally:
+                os.close(snapshot_fd)
+            source_snapshot = stage / source_snapshot_name
+            staged_xml = stage / self.output.name
+            from .export.openvino import build_openvino
+
+            if self._identity_at(stage_fd, source_snapshot_name) != owned_stage_members[source_snapshot_name]:
+                raise RuntimeError("OpenVINO source snapshot identity changed before conversion")
+            xml, metadata_value, effective = build_openvino(source_snapshot, staged_xml, precision, calibration)
+            staged_bin = xml.with_suffix(".bin")
+            for name in (self.output.name, self.output.with_suffix(".bin").name):
+                owned_stage_members[name] = self._identity_at(stage_fd, name)
+            compatibility_name = "openvino-compat.onnx"
+            try:
+                owned_stage_members[compatibility_name] = self._identity_at(stage_fd, compatibility_name)
+            except FileNotFoundError:
+                pass
+            if set(os.listdir(stage_fd)) != set(owned_stage_members):
+                raise RuntimeError("OpenVINO conversion created unexpected private stage members")
+            if not stage_is_owned():
+                raise RuntimeError("OpenVINO private stage was replaced during conversion")
+            xml_name, bin_name = xml.name, staged_bin.name
+            if (
+                xml_name != self.output.name
+                or bin_name != self.output.with_suffix(".bin").name
+                or self._sha_at(stage_fd, source_snapshot_name) != materialized.sha256
+            ):
+                raise RuntimeError("OpenVINO conversion did not produce regular XML and BIN")
+            if (
+                effective != precision
+                or not isinstance(metadata_value, dict)
+                or {item["name"] for item in metadata_value.get("inputs", ())} != {contract.input.input_name}
+                or set(metadata_value.get("outputs", ())) != {item.name for item in contract.raw_output.tensors}
+            ):
+                raise RuntimeError("OpenVINO conversion metadata contradicts contract or requested precision")
+            receipt = {
+                "schema": 1,
+                "target": self.plugin_id,
+                "openvino_version": self.plugin_version,
+                "device": "CPU",
+                "precision": effective,
+                "contract_json": contract.canonical_json(),
+                "contract_sha256": contract.digest,
+                "onnx_sha256": materialized.sha256,
+                "source_sha256": materialized.source_sha256,
+                "lineage_sha256": materialized.lineage_sha256,
+                "lineage_path": str(materialized.lineage_path),
+                "xml_sha256": self._sha_at(stage_fd, xml_name),
+                "bin_sha256": self._sha_at(stage_fd, bin_name),
+                "metadata": metadata_value,
+                "calibration": calibration_binding,
+            }
+            receipt_name = self.output.stem + ".receipt.json"
+            receipt_fd = os.open(
+                receipt_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=stage_fd,
+            )
+            try:
+                payload = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+                with os.fdopen(os.dup(receipt_fd), "wb") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                os.fsync(receipt_fd)
+            finally:
+                os.close(receipt_fd)
+            owned_stage_members[receipt_name] = self._identity_at(stage_fd, receipt_name)
+            if set(os.listdir(stage_fd)) != set(owned_stage_members):
+                raise RuntimeError("OpenVINO private stage gained an unowned member")
+            for staged_name in (xml_name, bin_name, receipt_name):
+                self._fsync_at(stage_fd, staged_name)
+                if self._identity_at(stage_fd, staged_name) != owned_stage_members[staged_name]:
+                    raise RuntimeError("OpenVINO staged member identity changed during fsync")
+                if not stage_is_owned():
+                    raise RuntimeError("OpenVINO private stage was replaced during fsync")
+            self._fsync_stage(stage_fd)
+            if not stage_is_owned():
+                raise RuntimeError("OpenVINO private stage was replaced during directory fsync")
+            final_bin_name = self.output.with_suffix(".bin").name
+            final_receipt_name = self.output.with_suffix(".receipt.json").name
+            public_names = (self.output.name, final_bin_name, final_receipt_name)
+            if any(self._entry_exists_at(parent_fd, name) for name in public_names):
+                raise FileExistsError("OpenVINO publication collision")
+            try:
+                # Receipt is the final commit marker.  Link never replaces an existing path.
+                for staged_name, final_name in (
+                    (xml_name, self.output.name),
+                    (bin_name, final_bin_name),
+                    (receipt_name, final_receipt_name),
+                ):
+                    self._assert_parent_path(parent, parent_identity)
+                    os.link(
+                        staged_name,
+                        final_name,
+                        src_dir_fd=stage_fd,
+                        dst_dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                    staged_identity = self._identity_at(stage_fd, staged_name)
+                    identity = self._identity_at(parent_fd, final_name)
+                    if identity != staged_identity:
+                        raise RuntimeError("OpenVINO publication identity changed during no-clobber link")
+                    created.append((final_name, identity))
+                    self._assert_parent_path(parent, parent_identity)
+                    self._fsync_public_at(parent_fd, final_name)
+                    self._fsync_parent(parent_fd)
+                if (
+                    self._sha_at(parent_fd, self.output.name) != receipt["xml_sha256"]
+                    or self._sha_at(parent_fd, final_bin_name) != receipt["bin_sha256"]
+                    or self._sha_at(parent_fd, final_receipt_name) != self._sha_at(stage_fd, receipt_name)
+                    or self._sha_at(stage_fd, source_snapshot_name) != materialized.sha256
+                ):
+                    raise RuntimeError("OpenVINO publication changed before commit")
+            except Exception:
+                rollback_publication()
+                raise
+            publication = (receipt, effective, self._sha_at(parent_fd, final_receipt_name))
+        finally:
+            had_error = sys.exc_info()[0] is not None
+            cleanup_error: Exception | None = None
+            if snapshot_cleanup_fd is not None:
+                try:
+                    os.ftruncate(snapshot_cleanup_fd, 0)
+                    os.fsync(snapshot_cleanup_fd)
+                except OSError as exc:
+                    cleanup_error = cleanup_error or exc
+                os.close(snapshot_cleanup_fd)
+            if stage_fd is not None:
+                for name, identity in reversed(tuple(owned_stage_members.items())):
+                    try:
+                        if self._identity_at(stage_fd, name) == identity:
+                            os.unlink(name, dir_fd=stage_fd)
+                    except (OSError, RuntimeError) as exc:
+                        cleanup_error = cleanup_error or exc
+                try:
+                    self._fsync_stage(stage_fd)
+                except OSError as exc:
+                    cleanup_error = cleanup_error or exc
+                finally:
+                    os.close(stage_fd)
+                try:
+                    if not stage_is_owned():
+                        raise RuntimeError("OpenVINO private stage identity changed during cleanup")
+                    os.rmdir(stage_name, dir_fd=parent_fd)
+                    self._fsync_parent(parent_fd)
+                except (OSError, RuntimeError) as exc:
+                    cleanup_error = cleanup_error or exc
+            if cleanup_error is not None and not had_error:
+                rollback_publication()
+                os.close(parent_fd)
+                raise cleanup_error
+            if had_error:
+                os.close(parent_fd)
+        try:
+            self._assert_parent_path(parent, parent_identity)
+            if publication is None:
+                raise RuntimeError("OpenVINO publication did not complete")
+            receipt, effective, receipt_sha = publication
+            artifact_token = secrets.token_urlsafe(32)
+            final_receipt = self.output.with_suffix(".receipt.json")
+            descriptors = (
+                ("contract_json", contract.canonical_json()),
+                ("receipt_path", str(final_receipt)),
+                ("onnx_sha256", materialized.sha256),
+                ("lineage_sha256", materialized.lineage_sha256),
+                ("effective_precision", effective),
+                ("device", "CPU"),
+                ("receipt_sha256", receipt_sha),
+                ("artifact_token", artifact_token),
+            )
+            artifact = PreparedArtifact(
+                self.output, receipt["xml_sha256"], self.plugin_id, self.plugin_version, contract.digest, descriptors
+            )
+            self._artifact_receipts[artifact_token] = (
+                artifact.sha256,
+                receipt["bin_sha256"],
+                receipt_sha,
+                contract.digest,
+                materialized.sha256,
+                materialized.lineage_sha256,
+                effective,
+                self.plugin_version,
+                str(materialized.lineage_path),
+            )
+            self._assert_parent_path(parent, parent_identity)
+            return artifact
+        except Exception:
+            if artifact_token is not None:
+                self._artifact_receipts.pop(artifact_token, None)
+            rollback_publication()
+            raise
+        finally:
+            os.close(parent_fd)
+
+    def verify_artifact(self, artifact: PreparedArtifact, contract: VisionContract) -> bool:
+        try:
+            values = dict(artifact.descriptors)
+            expected_keys = {
+                "contract_json",
+                "receipt_path",
+                "receipt_sha256",
+                "onnx_sha256",
+                "lineage_sha256",
+                "effective_precision",
+                "device",
+                "artifact_token",
+            }
+            if len(values) != len(artifact.descriptors) or set(values) != expected_keys:
+                return False
+            receipt_path = Path(values["receipt_path"])
+            if (
+                artifact.plugin_id != self.plugin_id
+                or artifact.contract_digest != contract.digest
+                or artifact.plugin_version != self.plugin_version
+                or artifact.material_path.is_symlink()
+                or receipt_path.is_symlink()
+                or not receipt_path.is_file()
+                or artifact.material_path != self.output
+                or receipt_path != self.output.with_suffix(".receipt.json")
+            ):
+                return False
+            receipt = json.loads(receipt_path.read_text())
+            xml, binary = artifact.material_path, artifact.material_path.with_suffix(".bin")
+            lineage_path = Path(receipt["lineage_path"])
+            lineage = json.loads(lineage_path.read_text())
+            receipt_keys = {
+                "schema",
+                "target",
+                "openvino_version",
+                "device",
+                "precision",
+                "contract_json",
+                "contract_sha256",
+                "onnx_sha256",
+                "source_sha256",
+                "lineage_sha256",
+                "lineage_path",
+                "xml_sha256",
+                "bin_sha256",
+                "metadata",
+                "calibration",
+            }
+            runtime_receipt = self._artifact_receipts.get(values["artifact_token"])
+            return (
+                set(receipt) == receipt_keys
+                and receipt["schema"] == 1
+                and xml.is_file()
+                and binary.is_file()
+                and not binary.is_symlink()
+                and receipt["target"] == self.plugin_id
+                and receipt["openvino_version"] == self.plugin_version
+                and receipt["device"] == values["device"] == "CPU"
+                and receipt["precision"] == values["effective_precision"]
+                and receipt["precision"] == self.precision
+                and receipt["contract_json"] == values["contract_json"] == contract.canonical_json()
+                and receipt["contract_sha256"] == contract.digest
+                and hashlib.sha256(receipt_path.read_bytes()).hexdigest() == values["receipt_sha256"]
+                and receipt["xml_sha256"] == hashlib.sha256(xml.read_bytes()).hexdigest() == artifact.sha256
+                and receipt["bin_sha256"] == hashlib.sha256(binary.read_bytes()).hexdigest()
+                and receipt["onnx_sha256"] == values["onnx_sha256"]
+                and receipt["lineage_sha256"] == values["lineage_sha256"]
+                and receipt["source_sha256"] == contract.provenance.source_sha256
+                and receipt["calibration"] == self._calibration_binding(contract)
+                and isinstance(receipt["metadata"], dict)
+                and {item["name"] for item in receipt["metadata"].get("inputs", ())} == {contract.input.input_name}
+                and set(receipt["metadata"].get("outputs", ())) == {item.name for item in contract.raw_output.tensors}
+                and lineage_path.is_file()
+                and not lineage_path.is_symlink()
+                and hashlib.sha256(lineage_path.read_bytes()).hexdigest() == receipt["lineage_sha256"]
+                and lineage
+                == {
+                    "schema": 1,
+                    "source_sha256": receipt["source_sha256"],
+                    "onnx_sha256": receipt["onnx_sha256"],
+                    "source_plugin": lineage["source_plugin"],
+                    "source_plugin_version": lineage["source_plugin_version"],
+                    "contract_digest": contract.digest,
+                }
+                and runtime_receipt
+                == (
+                    artifact.sha256,
+                    receipt["bin_sha256"],
+                    values["receipt_sha256"],
+                    contract.digest,
+                    receipt["onnx_sha256"],
+                    receipt["lineage_sha256"],
+                    receipt["precision"],
+                    self.plugin_version,
+                    str(lineage_path),
+                )
+            )
+        except (AttributeError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+
+    def prepare_input(self, artifact: PreparedArtifact, sample: Any, contract: VisionContract) -> PreparedInput:
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("OpenVINO artifact is not sealed")
+        return preprocess(contract, sample)
+
+    def run(self, artifact: PreparedArtifact, sample: Any) -> DetectionResult:
+        if not isinstance(sample, PreparedInput):
+            raise ValueError("OpenVINO target requires a contract PreparedInput")
+        descriptor_values = dict(artifact.descriptors)
+        contract = VisionContract.model_validate_json(descriptor_values["contract_json"])
+        if not self.verify_artifact(artifact, contract):
+            raise ValueError("OpenVINO artifact verification failed")
+        receipt_bytes = Path(descriptor_values["receipt_path"]).read_bytes()
+        if hashlib.sha256(receipt_bytes).hexdigest() != descriptor_values["receipt_sha256"]:
+            raise ValueError("OpenVINO receipt changed before in-memory compilation")
+        receipt = json.loads(receipt_bytes)
+        xml_bytes = artifact.material_path.read_bytes()
+        binary_bytes = artifact.material_path.with_suffix(".bin").read_bytes()
+        runtime_receipt = self._artifact_receipts.get(descriptor_values["artifact_token"])
+        if (
+            hashlib.sha256(xml_bytes).hexdigest() != receipt["xml_sha256"]
+            or hashlib.sha256(binary_bytes).hexdigest() != receipt["bin_sha256"]
+            or receipt["xml_sha256"] != artifact.sha256
+            or receipt["target"] != self.plugin_id
+            or receipt["openvino_version"] != self.plugin_version
+            or receipt["device"] != descriptor_values["device"]
+            or descriptor_values["device"] != "CPU"
+            or receipt["precision"] != descriptor_values["effective_precision"]
+            or descriptor_values["effective_precision"] != self.precision
+            or receipt["contract_json"] != contract.canonical_json()
+            or receipt["contract_sha256"] != contract.digest
+            or receipt["onnx_sha256"] != descriptor_values["onnx_sha256"]
+            or receipt["lineage_sha256"] != descriptor_values["lineage_sha256"]
+            or receipt["source_sha256"] != contract.provenance.source_sha256
+            or receipt["calibration"] != self._calibration_binding(contract)
+            or runtime_receipt
+            != (
+                artifact.sha256,
+                receipt["bin_sha256"],
+                descriptor_values["receipt_sha256"],
+                contract.digest,
+                receipt["onnx_sha256"],
+                receipt["lineage_sha256"],
+                receipt["precision"],
+                self.plugin_version,
+                receipt["lineage_path"],
+            )
+        ):
+            raise ValueError("OpenVINO artifact changed before in-memory compilation")
+        core = self._ov().Core()
+        model = core.compile_model(core.read_model(xml_bytes, binary_bytes), "CPU")
+        inputs, outputs = model.inputs, model.outputs
+        if (
+            len(inputs) != 1
+            or inputs[0].get_any_name() != contract.input.input_name
+            or inputs[0].get_element_type().to_dtype().name != contract.input.dtype
+            or tuple(inputs[0].get_shape()) != tuple(contract.input.shape)
+        ):
+            raise ValueError("OpenVINO input ABI mismatch")
+        import numpy as np
+
+        if np.asarray(sample.tensor).dtype.name != contract.input.dtype or tuple(sample.tensor.shape) != tuple(
+            contract.input.shape
+        ):
+            raise ValueError("OpenVINO PreparedInput dtype or shape contradicts contract")
+        declared = {item.name: item for item in contract.raw_output.tensors}
+        if {port.get_any_name() for port in outputs} != set(declared):
+            raise ValueError("OpenVINO output names contradict contract")
+        values = model({inputs[0].get_any_name(): sample.tensor})
+        tensors = {port.get_any_name(): values[port] for port in outputs}
+        for name, spec in declared.items():
+            value = np.asarray(tensors[name])
+            if (
+                value.dtype.name != spec.dtype
+                or len(value.shape) != len(spec.shape)
+                or any(isinstance(want, int) and want != got for want, got in zip(spec.shape, value.shape, strict=True))
+            ):
+                raise ValueError(f"OpenVINO output ABI mismatch for {name}")
+        if list(model.get_property("EXECUTION_DEVICES")) != ["CPU"]:
+            raise ValueError("OpenVINO execution device is not exactly CPU")
+        meta = {"execution_device": "CPU", "input_sha256": sample.input_sha256}
+        if contract.raw_output.semantics == "yolo_end2end":
+            from .decoders import yolo_end2end_contract
+
+            result = yolo_end2end_contract(
+                tensors[contract.raw_output.tensors[0].name], sample.trace, contract, image_size=sample.image_size
+            )
+        elif contract.raw_output.semantics == "custom":
+            from .decoders import rfdetr_contract_output
+
+            result = rfdetr_contract_output(
+                {"dets": tensors["dets"], "labels": tensors["labels"]}, sample.image_size, contract
+            )
+        elif contract.raw_output.semantics == "rtdetr_combined":
+            from .decoders import rtdetr_combined_v1_contract
+
+            result = rtdetr_combined_v1_contract(
+                tensors["output0"], sample.trace, contract, image_size=sample.image_size
+            )
+        else:
+            roles = contract.raw_output.roles or {}
+            boxes = np.asarray(tensors[roles["boxes"]]).reshape(-1, 4)
+            scores = np.asarray(tensors[roles["scores"]]).reshape(-1)
+            classes = np.asarray(tensors[roles["classes"]]).reshape(-1)
+            result = DetectionResult(
+                [Box(*map(float, x)) for x in boxes],
+                [float(x) for x in scores],
+                [int(x) for x in classes],
+                image_size=sample.image_size,
+            )
+        result.metadata.update(meta)
+        return result
+
+
 class TensorRTTargetPlugin(TargetPlugin):
     """Pinned TensorRT engine target with no ORT or CPU execution fallback.
 
@@ -1349,6 +2050,11 @@ class PluginRegistry:
 def make_tensorrt_target(**config: Any) -> TensorRTTargetPlugin:
     """Create a configured TensorRT target; there is deliberately no default."""
     return TensorRTTargetPlugin(**config)
+
+
+def make_openvino_target(**config: Any) -> OpenVinoTargetPlugin:
+    """Create an explicitly configured OpenVINO CPU target."""
+    return OpenVinoTargetPlugin(**config)
 
 
 DEFAULT_REGISTRY = PluginRegistry()
