@@ -1,168 +1,217 @@
-"""Offline, reproducible CPU adapter parity gate for the three supported families.
+"""Run an offline parity gate from explicit, checksum-pinned inputs.
 
-All inputs and exports are frozen by SHA256 below.  This never downloads,
-exports, benchmarks, or silently marks a missing dependency as a pass.
+The command never downloads or exports a model.  Every model, manifest, and
+image must be supplied in a JSON configuration with a SHA-256 digest.  Run
+``python scripts/integration_models.py --help`` for the configuration shape.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import platform
+import re
 import sys
-import traceback
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
 import vision
 from vision.manifest import VisionManifest
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "autoresearch/adapters-complete-260730"
-ASSETS = {
-    "bus": (
-        ROOT / "autoresearch/adapters-repair-260730/integration/bus.jpg",
-        "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
-    ),
-    "yolo_pt": (ROOT / "yolo26n.pt", "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"),
-    "yolo_onnx": (ROOT / "yolo26n.onnx", "81caddbbc9a312e36c31382e61a76e554abc0f2dc38fb2c07cc4b0a3c73bccdf"),
-    "rt_pt": (ROOT / "rtdetr-l.pt", "6de60b10d4bc566f00cda0f5b4d64afe4b66d48dc9695d2171effb7859d8e73f"),
-    "rt_onnx": (ROOT / "rtdetr-l.onnx", "a5386605945d18ccbc17ce94a2765d51dada2cb20f0804c364e2051cc5066ee6"),
-    "rf_pt": (
-        Path.home() / ".roboflow/models/rf-detr-nano.pth",
-        "d8d6b9ee57d4d0ed2b1f305163624712a0532cb7bce0c747317984fc5457440d",
-    ),
-    "rf_onnx": (
-        ROOT / "autoresearch/adapters-repair-260730/rfdetr-export/rfdetr-nano.onnx",
-        "af8b4355afe69e566bf73749bb7a357a1d830deb12ff698d694ba7374f5986a1",
-    ),
-    "wide": (OUT / "wide.jpg", "d3597d8136548b290e784e4c8d1f215500f87576cef436a99d691b2f44e31b88"),
-    "tall": (OUT / "tall.jpg", "bcf8e7c4c026ad34623ec2897ba3ea39b31350a8faeace99259204f3500476e6"),
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+_TOP_LEVEL_KEYS = {"name", "native", "candidate", "images", "gates"}
+_MODEL_KEYS = {"model", "model_sha256", "manifest", "manifest_sha256"}
+_IMAGE_KEYS = {"name", "path", "sha256"}
+_GATE_KEYS = {
+    "iou_threshold",
+    "score_tolerance",
+    "high_confidence",
+    "min_mean_iou",
+    "min_iou",
+    "max_mean_score_delta",
+    "max_score_delta",
 }
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+@dataclass(frozen=True)
+class PinnedFile:
+    path: Path
+    sha256: str
 
 
-def checked(name: str) -> Path:
-    path, expected = ASSETS[name]
+@dataclass(frozen=True)
+class ModelInput:
+    model: PinnedFile
+    manifest: PinnedFile
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
+    if set(value) != expected:
+        raise ValueError(f"{label} keys must be exactly {sorted(expected)}")
+
+
+def _pinned(base: Path, path_value: Any, digest_value: Any, label: str) -> PinnedFile:
+    if not isinstance(path_value, str) or not path_value:
+        raise ValueError(f"{label} path must be a non-empty string")
+    if not isinstance(digest_value, str) or _DIGEST.fullmatch(digest_value) is None:
+        raise ValueError(f"{label} sha256 must be 64 lowercase hexadecimal characters")
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base / path
+    if path.is_symlink():
+        raise ValueError(f"{label} must be a regular, non-symlink file")
+    path = path.resolve(strict=True)
     if not path.is_file():
-        raise RuntimeError(f"frozen asset missing: {path}")
-    actual = sha256(path)
-    if expected is not None and actual != expected:
-        raise RuntimeError(f"frozen asset hash mismatch: {path}: {actual}")
-    return path
+        raise ValueError(f"{label} must be a regular, non-symlink file")
+    actual = _sha256(path)
+    if actual != digest_value:
+        raise ValueError(f"{label} sha256 mismatch: expected {digest_value}, observed {actual}")
+    return PinnedFile(path, actual)
 
 
-def manifest(family: str, source: Path, *, onnx: bool) -> VisionManifest:
-    if family == "yolo26":
-        return VisionManifest(
-            source=str(source),
-            family="onnx" if onnx else "yolo26",
-            output={"boxes_name": "output0"},
-            decoder={"kind": "yolo_end2end", "score_threshold": 0.25},
-        )
-    if family == "rtdetr":
-        return VisionManifest(
-            source=str(source),
-            family="onnx" if onnx else "rtdetr",
-            preprocessing={"resize": "resize", "implementation": "opencv_linear_scale_fill"},
-            output={"box_format": "cxcywh", "boxes_name": "output0"},
-            decoder={"kind": "rtdetr_combined", "boxes_normalized": True, "score_threshold": 0.4},
-        )
-    return VisionManifest(
-        source=str(source),
-        family="onnx" if onnx else "rfdetr",
-        input={"shape": [1, 3, 384, 384], "input_name": "input" if onnx else "images"},
-        preprocessing={
-            "resize": "resize",
-            "implementation": "torchvision_bilinear_antialias_false",
-            "mean": [0.485, 0.456, 0.406],
-            "std": [0.229, 0.224, 0.225],
-        },
-        output={"box_format": "cxcywh", "boxes_name": "dets", "logits_name": "labels"},
-        decoder={"kind": "rfdetr", "boxes_normalized": True, "score_threshold": 0.3},
+def _model_input(base: Path, value: Any, label: str) -> ModelInput:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    _exact_keys(value, _MODEL_KEYS, label)
+    return ModelInput(
+        model=_pinned(base, value["model"], value["model_sha256"], f"{label}.model"),
+        manifest=_pinned(base, value["manifest"], value["manifest_sha256"], f"{label}.manifest"),
     )
 
 
-def execute(family: str, pt_name: str, onnx_name: str, threshold: float) -> dict:
-    pt, onnx = checked(pt_name), checked(onnx_name)
-    native_manifest, onnx_manifest = manifest(family, pt, onnx=False), manifest(family, onnx, onnx=True)
-    native_manifest.to_yaml(OUT / f"{family}-native-manifest.yaml")
-    onnx_manifest.to_yaml(OUT / f"{family}-onnx-manifest.yaml")
-    native = vision.load(str(pt), device="cpu", manifest=native_manifest)
-    candidate = vision.load(str(onnx), device="cpu", manifest=onnx_manifest)
-    variants = {"bus": checked("bus"), "wide": checked("wide"), "tall": checked("tall")}
-    outcomes = {}
-    for name, image in variants.items():
-        reference, observed = native(image), candidate(image)
-        gate = {
-            "yolo26": (0.95, 0.85, 0.05, 0.12),
-            "rtdetr": (0.98, 0.97, 0.01, 0.01),
-            "rfdetr": (0.99, 0.97, 0.01, 0.03),
-        }[family]
-        detail = vision.validate(reference, observed, iou_threshold=0.80, score_tolerance=gate[3], high_confidence=0.5)
+def _load_config(path: Path) -> tuple[str, ModelInput, ModelInput, dict[str, PinnedFile], dict[str, float]]:
+    config_path = path.resolve(strict=True)
+    raw = json.loads(config_path.read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("configuration must be a JSON object")
+    _exact_keys(raw, _TOP_LEVEL_KEYS, "configuration")
+    if not isinstance(raw["name"], str) or not raw["name"].strip():
+        raise ValueError("configuration name must be a non-empty string")
+    base = config_path.parent
+    native = _model_input(base, raw["native"], "native")
+    candidate = _model_input(base, raw["candidate"], "candidate")
+
+    image_rows = raw["images"]
+    if not isinstance(image_rows, list) or not image_rows:
+        raise ValueError("images must be a non-empty list")
+    images: dict[str, PinnedFile] = {}
+    for index, row in enumerate(image_rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"images[{index}] must be an object")
+        _exact_keys(row, _IMAGE_KEYS, f"images[{index}]")
+        name = row["name"]
+        if not isinstance(name, str) or not name or name in images:
+            raise ValueError("image names must be non-empty and unique")
+        images[name] = _pinned(base, row["path"], row["sha256"], f"images[{index}]")
+
+    gates = raw["gates"]
+    if not isinstance(gates, dict):
+        raise ValueError("gates must be an object")
+    _exact_keys(gates, _GATE_KEYS, "gates")
+    parsed_gates: dict[str, float] = {}
+    for key, value in gates.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"gates.{key} must be numeric")
+        parsed_gates[key] = float(value)
+    if not all(0.0 <= value <= 1.0 for value in parsed_gates.values()):
+        raise ValueError("all gate values must be within [0,1]")
+    return raw["name"], native, candidate, images, parsed_gates
+
+
+def _manifest(pinned: PinnedFile, model: PinnedFile) -> VisionManifest:
+    manifest = VisionManifest.from_yaml(pinned.path)
+    return manifest.model_copy(update={"source": str(model.path)})
+
+
+def execute(config: Path) -> dict[str, Any]:
+    name, native_input, candidate_input, images, gates = _load_config(config)
+    native_manifest = _manifest(native_input.manifest, native_input.model)
+    candidate_manifest = _manifest(candidate_input.manifest, candidate_input.model)
+    native = vision.load(str(native_input.model.path), device="cpu", manifest=native_manifest)
+    candidate = vision.load(str(candidate_input.model.path), device="cpu", manifest=candidate_manifest)
+
+    outcomes: dict[str, Any] = {}
+    for image_name, pinned_image in images.items():
+        reference = native(pinned_image.path)
+        observed = candidate(pinned_image.path)
+        detail = vision.validate(
+            reference,
+            observed,
+            iou_threshold=gates["iou_threshold"],
+            score_tolerance=gates["score_tolerance"],
+            high_confidence=gates["high_confidence"],
+        )
         detail.update(
             {
                 "reference_count": len(reference.boxes),
                 "candidate_count": len(observed.boxes),
                 "reference_metadata": reference.metadata,
                 "candidate_metadata": observed.metadata,
-                "image_sha256": sha256(image),
-                "image_size": Image.open(image).size,
+                "image_sha256": pinned_image.sha256,
+                "image_size": Image.open(pinned_image.path).size,
             }
         )
-        if (
+        failed = (
             not reference.boxes
             or detail["lost"]
             or detail["added"]
             or detail["high_conf_lost"]
             or detail["high_conf_added"]
             or detail["class_mismatches"]
-            or detail["mean_iou"] < gate[0]
-            or detail["min_iou"] < gate[1]
-            or detail["mean_score_delta"] > gate[2]
-            or detail["max_score_delta"] > gate[3]
-        ):
-            raise RuntimeError(f"{family}/{name} parity gate failed: {detail}")
-        outcomes[name] = detail
+            or detail["mean_iou"] < gates["min_mean_iou"]
+            or detail["min_iou"] < gates["min_iou"]
+            or detail["mean_score_delta"] > gates["max_mean_score_delta"]
+            or detail["max_score_delta"] > gates["max_score_delta"]
+        )
+        if failed:
+            raise RuntimeError(f"{name}/{image_name} parity gate failed: {detail}")
+        outcomes[image_name] = detail
+
     return {
         "status": "passed",
-        "family": family,
-        "native": str(pt),
-        "native_sha256": sha256(pt),
-        "onnx": str(onnx),
-        "onnx_sha256": sha256(onnx),
-        "threshold": threshold,
-        "variants": outcomes,
+        "name": name,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "hardware": platform.platform(),
+        "python": sys.version,
+        "mode": "offline-checksum-pinned",
+        "native_sha256": native_input.model.sha256,
+        "candidate_sha256": candidate_input.model.sha256,
+        "images": outcomes,
+        "gates": gates,
     }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compare two local vision models using checksum-pinned manifests and images."
+    )
+    parser.add_argument("--config", required=True, type=Path, help="JSON configuration; all input paths need SHA-256")
+    parser.add_argument("--output", required=True, type=Path, help="new JSON result path (never overwritten)")
+    return parser
 
 
 def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
-    result = {
-        "at": datetime.now(UTC).isoformat(),
-        "hardware": platform.platform(),
-        "python": sys.version,
-        "mode": "offline-frozen-assets",
-        "models": {},
-    }
-    for family, pt, onnx, threshold in (
-        ("yolo26", "yolo_pt", "yolo_onnx", 0.25),
-        ("rtdetr", "rt_pt", "rt_onnx", 0.4),
-        ("rfdetr", "rf_pt", "rf_onnx", 0.3),
-    ):
-        try:
-            result["models"][family] = execute(family, pt, onnx, threshold)
-        except Exception as error:
-            result["models"][family] = {"status": "failed", "error": repr(error), "traceback": traceback.format_exc()}
-    (OUT / "results.json").write_text(json.dumps(result, indent=2, sort_keys=True))
+    args = _parser().parse_args()
+    result = execute(args.config)
+    output = args.output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x") as handle:
+        json.dump(result, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     print(json.dumps(result, indent=2, sort_keys=True))
-    if any(model["status"] != "passed" for model in result["models"].values()):
-        raise SystemExit(1)
 
 
 if __name__ == "__main__":

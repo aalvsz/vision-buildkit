@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vision-buildkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Research-only build, semantic validation, and packaging toolkit for portable object-detection artifacts"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.10,<3.14"
 license = "LicenseRef-Vision-BuildKit-Research-1.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [
@@ -30,6 +30,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -43,15 +44,16 @@ Repository = "https://github.com/aalvsz/vision-buildkit"
 Issues = "https://github.com/aalvsz/vision-buildkit/issues"
 
 [project.optional-dependencies]
+# Keep the CPython 3.10 ORT 1.23 wheel paired with Jetson-compatible ONNX 1.17 (IR v10).
 pytorch = ["torch>=2.2"]
-onnx = ["onnxruntime>=1.17", "onnx>=1.15", "onnxconverter-common>=1.14", "onnxslim>=0.1.82", "opencv-python-headless>=4.9"]
-adapters = ["onnxruntime>=1.17", "onnx>=1.15", "onnxslim>=0.1.82", "opencv-python-headless>=4.9", "torch>=2.2", "torchvision>=0.17"]
-openvino = ["openvino>=2024.0", "nncf>=2.19", "onnxruntime>=1.17", "onnx>=1.15", "onnxconverter-common>=1.14", "onnxslim>=0.1.82", "opencv-python-headless>=4.9"]
+onnx = ["onnxruntime>=1.17,<1.24; python_version < '3.11'", "onnxruntime>=1.17; python_version >= '3.11'", "onnx>=1.15,<1.18; python_version < '3.11'", "onnx>=1.15; python_version >= '3.11'", "onnxconverter-common>=1.14", "onnxslim>=0.1.82", "opencv-python-headless>=4.9"]
+adapters = ["onnxruntime>=1.17,<1.24; python_version < '3.11'", "onnxruntime>=1.17; python_version >= '3.11'", "onnx>=1.15,<1.18; python_version < '3.11'", "onnx>=1.15; python_version >= '3.11'", "onnxslim>=0.1.82", "opencv-python-headless>=4.9", "torch>=2.2", "torchvision>=0.17"]
+openvino = ["openvino>=2024.0", "nncf>=2.19", "onnxruntime>=1.17,<1.24; python_version < '3.11'", "onnxruntime>=1.17; python_version >= '3.11'", "onnx>=1.15,<1.18; python_version < '3.11'", "onnx>=1.15; python_version >= '3.11'", "onnxconverter-common>=1.14", "onnxslim>=0.1.82", "opencv-python-headless>=4.9"]
 yolo = ["ultralytics>=8.3"]
 libreyolo = ["libreyolo>=1.4"]
-rfdetr = ["rfdetr"]
+rfdetr = ["rfdetr[onnx]==1.9.0"]
 dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
-quantization = ["onnxruntime>=1.17", "onnx>=1.15", "onnxconverter-common>=1.14"]
+quantization = ["onnxruntime>=1.17,<1.24; python_version < '3.11'", "onnxruntime>=1.17; python_version >= '3.11'", "onnx>=1.15,<1.18; python_version < '3.11'", "onnx>=1.15; python_version >= '3.11'", "onnxconverter-common>=1.14"]
 metrics = ["pycocotools>=2.0.7"]
 validation = ["pycocotools>=2.0.7", "scipy>=1.11"]
 video = ["opencv-python-headless>=4.9"]
@@ -70,6 +72,7 @@ include = [
     "/vision",
     "/tests",
     "/scripts",
+    "/MIGRATING.md",
     "/README.md",
     "/pyproject.toml",
 ]

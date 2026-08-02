@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import shutil
+from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +32,7 @@ from vision.contract import VisionContract
 from vision.manifest import VisionManifest, manifest_from_contract
 from vision.plugins import (
     MaterializedOnnx,
+    NeutralOnnxRequest,
     OnnxRuntimeTargetPlugin,
     PluginRegistry,
     PreparedArtifact,
@@ -37,6 +40,7 @@ from vision.plugins import (
     SourceAdapter,
     TargetPlugin,
     TensorRTTargetPlugin,
+    neutral_onnx_request,
 )
 from vision.providers import UltralyticsSourceAdapter
 from vision.types import Box, DetectionResult
@@ -356,13 +360,149 @@ def test_contract_and_planner_binds_mutating_source(tmp_path):
     registry = PluginRegistry()
     registry.register_source(Source())
     registry.register_target(Target())
-    first = BuildPlanner().plan(Source(), Target(), c, sha(source)).candidates[0].candidate_id
+    first = BuildPlanner().plan(Source(), Target(), c, sha(source), resolutions=((32, 32),)).candidates[0].candidate_id
     source.write_bytes(b"two")
     with pytest.raises(ValueError):
         BuildPlanner().plan(Source(), Target(), c, sha(source))
     assert (
-        first != BuildPlanner().plan(Source(), Target(), contract(sha(source)), sha(source)).candidates[0].candidate_id
+        first
+        != BuildPlanner()
+        .plan(Source(), Target(), contract(sha(source)), sha(source), resolutions=((32, 32),))
+        .candidates[0]
+        .candidate_id
     )
+
+
+def test_target_receives_only_neutral_request_after_central_provider_attestation(tmp_path):
+    source_path = tmp_path / "source"
+    onnx = tmp_path / "model.onnx"
+    source_path.write_bytes(b"source")
+    onnx.write_bytes(b"onnx")
+    value = contract(sha(source_path))
+
+    class ExplosiveSource(Source):
+        blocked = False
+
+        def verify_materialization(self, *args):
+            if self.blocked:
+                raise AssertionError("target invoked provider runtime")
+            return super().verify_materialization(*args)
+
+    class NeutralTarget(TargetPlugin):
+        plugin_id, plugin_version = "neutral", "1"
+
+        def build(self, captured, candidate, output=None):
+            raise AssertionError("not used")
+
+        def run(self, artifact, sample):
+            raise AssertionError("not used")
+
+        def _prepare_onnx(self, path, materialized, contract):
+            return PreparedArtifact(path, materialized.sha256, self.plugin_id, self.plugin_version, contract.digest)
+
+    source = ExplosiveSource()
+    captured = source.prepare(source_path, value)
+    lineage = onnx.with_suffix(".onnx.lineage.json")
+    lineage.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "source_sha256": captured.sha256,
+                "onnx_sha256": sha(onnx),
+                "source_plugin": source.plugin_id,
+                "source_plugin_version": source.plugin_version,
+                "contract_digest": value.digest,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    raw = MaterializedOnnx(
+        onnx,
+        sha(onnx),
+        captured.sha256,
+        source.plugin_id,
+        source.plugin_version,
+        value.digest,
+        lineage,
+        sha(lineage),
+        "",
+    )
+    request = neutral_onnx_request(source._issue_materialization(raw, captured, value), captured, source, value)
+    source.blocked = True
+    assert NeutralTarget().prepare_materialized(request).material_path == onnx
+    with pytest.raises(TypeError, match="sealed"):
+        type("SubRequest", (NeutralOnnxRequest,), {})
+    with pytest.raises(ValueError, match="centrally issued"):
+        NeutralTarget().prepare_materialized(copy(request))
+    with pytest.raises(ValueError, match="centrally issued"):
+        NeutralTarget().prepare_materialized(NeutralOnnxRequest(request.materialized, request.contract, "forged"))
+    object.__setattr__(
+        request,
+        "contract",
+        value.model_copy(
+            update={"provenance": value.provenance.model_copy(update={"source": "x", "source_sha256": "0" * 64})}
+        ),
+    )
+    with pytest.raises(ValueError, match="central attestation"):
+        NeutralTarget().prepare_materialized(request)
+
+
+def test_planner_uses_layout_axes_and_partial_dynamic_contract_axes(tmp_path):
+    source = tmp_path / "source"
+    source.write_bytes(b"one")
+    value = contract(sha(source))
+    nhwc = value.model_copy(
+        update={"input": value.input.model_copy(update={"layout": "NHWC", "shape": (1, 32, 32, 3)})}
+    )
+    assert BuildPlanner().plan(Source(), Target(), nhwc, sha(source), resolutions=((32, 32),)).candidates
+    with pytest.raises(ValueError, match="contract input shape/dynamic axes"):
+        BuildPlanner().plan(Source(), Target(), nhwc, sha(source), resolutions=((32, 33),))
+
+    class DynamicSource(Source):
+        capabilities = frozenset({"fp32", "dynamic", "nms:source"})
+
+    class DynamicTarget(Target):
+        capabilities = frozenset({"fp32", "dynamic", "nms:source"})
+
+    partial = value.model_copy(update={"input": value.input.model_copy(update={"shape": (1, 3, "H", 32)})})
+    assert (
+        BuildPlanner()
+        .plan(DynamicSource(), DynamicTarget(), partial, sha(source), resolutions=((77, 32),), dynamics=(True,))
+        .candidates
+    )
+    with pytest.raises(ValueError, match="contract input shape/dynamic axes"):
+        BuildPlanner().plan(
+            DynamicSource(), DynamicTarget(), partial, sha(source), resolutions=((77, 32),), dynamics=(False,)
+        )
+    with pytest.raises(ValueError, match="contract input shape/dynamic axes"):
+        BuildPlanner().plan(
+            DynamicSource(),
+            DynamicTarget(),
+            partial,
+            sha(source),
+            resolutions=((77, 32),),
+            batches=(2,),
+            dynamics=(True,),
+        )
+
+
+@pytest.mark.parametrize(
+    "resolution,batch,dynamic", [((640, 640), 1, False), ((32, 32), 2, False), ((32, 32), 1, True)]
+)
+def test_planner_rejects_candidates_that_contradict_fixed_contract_input(tmp_path, resolution, batch, dynamic):
+    source = tmp_path / "source"
+    source.write_bytes(b"one")
+    with pytest.raises(ValueError, match="candidate contradicts contract input shape/dynamic axes"):
+        BuildPlanner().plan(
+            Source(),
+            Target(),
+            contract(sha(source)),
+            sha(source),
+            resolutions=(resolution,),
+            batches=(batch,),
+            dynamics=(dynamic,),
+        )
 
 
 def test_report_requires_digest_and_file_backed_pass(tmp_path):
@@ -390,17 +530,24 @@ def test_generated_schema_v1_capsule_verifies_in_a_clean_fixture(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "path",
+    "capsule_env",
     [
-        "autoresearch/vision-buildkit-phase16-260731/run/certified.vcap",
-        "autoresearch/vision-buildkit-phase17-axelera-260731/run/certified.vcap",
+        "VISION_EXTERNAL_V1_CAPSULE_A",
+        "VISION_EXTERNAL_V1_CAPSULE_B",
     ],
 )
-def test_external_phase_v1_capsule_reports_keep_legacy_digest_shape(path):
-    """External preserved evidence; skipped in a clean clone without it."""
-    root = Path(path)
+@pytest.mark.skipif(
+    os.environ.get("VISION_RUN_EXTERNAL_EVIDENCE") != "1",
+    reason="set VISION_RUN_EXTERNAL_EVIDENCE=1 to verify externally supplied v1 capsules",
+)
+def test_external_phase_v1_capsule_reports_keep_legacy_digest_shape(capsule_env):
+    """Opt-in verification of caller-supplied, mutable v1 evidence."""
+    path = os.environ.get(capsule_env)
+    if not path:
+        pytest.skip(f"set {capsule_env} to an external capsule directory")
+    root = Path(path).resolve()
     if not root.is_dir():
-        pytest.skip("external preserved Phase16/17 evidence is not present")
+        pytest.skip(f"external capsule directory is not present: {capsule_env}")
     raw = json.loads((root / "certification-report.json").read_text())
     report = CertificationReport.model_validate(raw)
     assert report.schema_version == 1
@@ -1538,7 +1685,9 @@ def test_mock_tensorrt_conformance_capsule_receipt_relocates_and_selects(tmp_pat
 
     monkeypatch.setattr("vision.backends.TensorRTBackend.build_atomic", classmethod(build))
     target = TensorRTTargetPlugin(engine_output=artifact)
-    prepared = target.prepare_materialized(materialized, captured, source_plugin, value)
+    from vision.plugins import neutral_onnx_request
+
+    prepared = target.prepare_materialized(neutral_onnx_request(materialized, captured, source_plugin, value))
     golden, base_runtime, accuracy, bundle = files(
         tmp_path, sha(source), sha(artifact), target_plugin="tensorrt", target_version="1"
     )

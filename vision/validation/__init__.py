@@ -1158,6 +1158,15 @@ def _cleanup_owned(reservation: dict[str, Any], *, preserve_lock: bool = False) 
                 reservation[key] = -1
 
 
+def _add_exception_note(exc: Exception, note: str) -> None:
+    """Attach diagnostic context on Python 3.10 as well as 3.11+."""
+    add_note = getattr(exc, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+    else:
+        exc.__notes__ = [*getattr(exc, "__notes__", ()), note]
+
+
 def _publish_materialized(
     reference: list[dict[str, Any]],
     candidate: list[dict[str, Any]],
@@ -1324,7 +1333,7 @@ def _publish_materialized(
                 published = False
             except Exception as rollback_error:
                 preserve_lock = True
-                exc.add_note(f"validation publication rollback failed: {rollback_error!r}")
+                _add_exception_note(exc, f"validation publication rollback failed: {rollback_error!r}")
         raise
     finally:
         if reservation.get("parent_fd", -1) >= 0:

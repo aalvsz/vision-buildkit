@@ -48,6 +48,8 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
         image.load()
     image_size = image.size
     array = np.asarray(image.convert("RGB"))
+    rfdetr = contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
+    rfdetr_scaled = False
     transposed = False
     trace = GeometryTrace(image_size, image_size, 1.0, 1.0)
     for number, transform in enumerate(contract.preprocessing):
@@ -89,6 +91,22 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
                     image, (transform.width, transform.height), transform.pad_value
                 )
                 continue
+            if rfdetr and transform.kind == "resize":
+                if transform.interpolation != "bilinear":
+                    raise ValueError("torch tensor resize requires bilinear interpolation")
+                try:
+                    import torch
+                    import torch.nn.functional as functional
+                except ImportError as exc:
+                    raise RuntimeError("torch_bilinear_antialias_false requires torch") from exc
+                height, width = transform.height, transform.width
+                tensor = torch.from_numpy(np.array(array, copy=True)).permute(2, 0, 1).unsqueeze(0).float().div_(255.0)
+                tensor = functional.interpolate(
+                    tensor, size=(height, width), mode="bilinear", align_corners=False, antialias=False
+                )
+                array = tensor.squeeze(0).permute(1, 2, 0).numpy()
+                rfdetr_scaled = True
+                continue
             resample = {
                 "nearest": Image.Resampling.NEAREST,
                 "bilinear": Image.Resampling.BILINEAR,
@@ -111,7 +129,10 @@ def preprocess(contract: VisionContract, sample: Path | bytes | Image.Image) -> 
                 canvas[top : top + new_height, left : left + new_width] = resized
                 array = canvas
         elif transform.kind == "normalize":
-            array = (array.astype(np.float32) - np.asarray(transform.mean)) / np.asarray(transform.std)
+            array = array.astype(np.float32)
+            if rfdetr and not rfdetr_scaled:
+                array /= 255.0
+            array = (array - np.asarray(transform.mean, dtype=np.float32)) / np.asarray(transform.std, dtype=np.float32)
         elif transform.kind == "transpose":
             if number != len(contract.preprocessing) - 1:
                 raise ValueError("transpose must be the final preprocessing transform")

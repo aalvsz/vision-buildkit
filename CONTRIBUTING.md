@@ -25,7 +25,7 @@ tests, and documentation.
 
 ## Development setup
 
-Vision BuildKit supports Python 3.11–3.13 and uses
+Vision BuildKit supports Python 3.10–3.13 and uses
 [uv](https://docs.astral.sh/uv/) for reproducible environments:
 
 ```bash

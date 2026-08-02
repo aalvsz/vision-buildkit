@@ -15,7 +15,7 @@ from .plugins import (
     TensorRTTargetPlugin,
     make_tensorrt_target,
 )
-from .providers import LibreYoloSourceAdapter, UltralyticsSourceAdapter
+from .providers import LibreYoloSourceAdapter, RFDetrSourceAdapter, UltralyticsSourceAdapter
 from .types import Box, DetectionResult
 
 __all__ = [
@@ -38,6 +38,7 @@ __all__ = [
     "make_tensorrt_target",
     "UltralyticsSourceAdapter",
     "LibreYoloSourceAdapter",
+    "RFDetrSourceAdapter",
     "CapsuleArtifact",
     "CapsuleMode",
     "select_runtime",

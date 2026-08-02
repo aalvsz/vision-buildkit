@@ -93,7 +93,14 @@ class TensorSpec(Strict):
 
 
 class RawOutput(Strict):
-    semantics: Literal["boxes_scores_classes", "yolo_end2end", "yolo_raw", "detr_logits_boxes", "custom"]
+    semantics: Literal[
+        "boxes_scores_classes",
+        "yolo_end2end",
+        "yolo_raw",
+        "detr_logits_boxes",
+        "rtdetr_combined",
+        "custom",
+    ]
     tensors: tuple[TensorSpec, ...] = Field(min_length=1)
     decoder_plugin: str | None = None
     roles: dict[Literal["boxes", "scores", "classes"], str] | None = None
@@ -121,6 +128,12 @@ class RawOutput(Strict):
             item = self.tensors[0]
             if item.dtype not in {"float32", "float16"} or len(item.shape) not in {2, 3} or item.shape[-1] != 6:
                 raise ValueError("yolo_end2end tensor must be float rank 2/3 with final dimension 6")
+        if self.semantics == "rtdetr_combined":
+            if self.roles is not None or self.decoder_plugin is not None or len(self.tensors) != 1:
+                raise ValueError("rtdetr_combined requires one tensor and no output roles/plugin")
+            item = self.tensors[0]
+            if item.name != "output0" or item.dtype != "float32" or item.shape != (1, 300, 6):
+                raise ValueError("rtdetr_combined requires exact output0 float32 [1,300,6] ABI")
         return self
 
 

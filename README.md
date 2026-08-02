@@ -53,7 +53,7 @@ The 10-image subset is a build/parity gate, **not** a full COCO accuracy claim, 
 
 ## Install
 
-Python 3.11–3.13 is supported. Development setup uses [uv](https://docs.astral.sh/uv/):
+Python 3.10–3.13 is supported. Development setup uses [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/aalvsz/vision-buildkit.git
@@ -62,6 +62,11 @@ uv sync --extra yolo --extra onnx --extra validation
 ```
 
 The distribution is `vision-buildkit`; the Python module and CLI are `vision`. Provider and backend dependencies are optional and imported only when needed.
+
+Upgrading a source or target plugin from 0.1.x? Version 0.2.0 introduces a
+sealed provider-neutral target boundary and an explicitly versioned RT-DETR
+decoder ABI. See the [0.2.0 migration guide](https://github.com/aalvsz/vision-buildkit/blob/v0.2.0/MIGRATING.md)
+before updating custom plugins or manifests.
 
 ## A small workflow
 

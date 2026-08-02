@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..decoders import detr, rfdetr_output, rtdetr_combined, yolo_end2end, yolo_end2end_contract, yolo_raw
+from ..contract import VisionContract
+from ..decoders import (
+    detr,
+    rfdetr_output,
+    rtdetr_combined,
+    rtdetr_combined_v1_contract,
+    yolo_end2end,
+    yolo_end2end_contract,
+    yolo_raw,
+)
 from ..types import Box, DetectionResult
 from .base import ModelAdapter, need
 from .processor import DetectionProcessor
@@ -28,7 +37,7 @@ class OnnxAdapter(ModelAdapter):
         output = self.manifest.output
         if decoder == "boxes_scores_classes":
             required = {output.boxes_name, output.scores_name, output.labels_name}
-        elif decoder in {"yolo_end2end", "yolo_raw", "rtdetr_combined"}:
+        elif decoder in {"yolo_end2end", "yolo_raw", "rtdetr_combined", "rtdetr_combined_v1"}:
             required = {output.boxes_name}
         elif decoder == "rfdetr":
             required = {output.boxes_name, output.logits_name}
@@ -147,14 +156,12 @@ class OnnxAdapter(ModelAdapter):
         decoder = self.manifest.decoder
         if decoder.kind == "boxes_scores_classes":
             result = self._separate_outputs(outputs, image_size)
-        elif decoder.kind in {"yolo_end2end", "yolo_raw", "rtdetr_combined"}:
+        elif decoder.kind in {"yolo_end2end", "yolo_raw", "rtdetr_combined", "rtdetr_combined_v1"}:
             output_name = self.manifest.output.boxes_name
             if output_name is None or output_name not in self.output_names:
                 raise ValueError(f"{decoder.kind} requires an explicit valid output.boxes_name")
             array = outputs[output_name]
             if decoder.kind == "yolo_end2end":
-                from ..contract import VisionContract
-
                 result = (
                     yolo_end2end_contract(
                         array, trace, VisionContract.model_validate(self.manifest.contract), image_size=image_size
@@ -164,6 +171,15 @@ class OnnxAdapter(ModelAdapter):
                 )
             elif decoder.kind == "yolo_raw":
                 result = yolo_raw(array, trace, decoder.score_threshold, decoder.iou_threshold)
+            elif decoder.kind == "rtdetr_combined_v1":
+                if self.manifest.contract is None:
+                    raise ValueError("rtdetr_combined_v1 requires an embedded VisionContract")
+                result = rtdetr_combined_v1_contract(
+                    array,
+                    trace,
+                    VisionContract.model_validate(self.manifest.contract),
+                    image_size=image_size,
+                )
             else:
                 result = rtdetr_combined(array, trace, decoder.score_threshold)
         elif decoder.kind == "rfdetr":
@@ -174,11 +190,15 @@ class OnnxAdapter(ModelAdapter):
                     "RF-DETR named outputs unavailable: "
                     f"requested={box_name, logits_name}, got={sorted(self.output_names)}"
                 )
+            contract = (
+                VisionContract.model_validate(self.manifest.contract) if self.manifest.contract is not None else None
+            )
             result = rfdetr_output(
                 {"boxes": outputs[box_name], "logits": outputs[logits_name]},
                 image_size,
                 decoder.top_k,
                 decoder.score_threshold,
+                contract=contract,
             )
         else:
             required = {"boxes": self.manifest.output.boxes_name, "logits": self.manifest.output.logits_name}

@@ -12,7 +12,7 @@ import secrets
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
@@ -61,6 +61,22 @@ class MaterializedOnnx:
     receipt: str
 
 
+@dataclass(frozen=True)
+class NeutralOnnxRequest:
+    """Centrally-attested ONNX bytes supplied to a target without provider code."""
+
+    materialized: MaterializedOnnx
+    contract: VisionContract
+    _token: str = field(repr=False, compare=False)
+
+    def __init_subclass__(cls, **kwargs):
+        raise TypeError("NeutralOnnxRequest is sealed")
+
+
+_NEUTRAL_RECEIPTS: dict[str, tuple[str, str, str, str]] = {}
+_NEUTRAL_REQUESTS: dict[str, NeutralOnnxRequest] = {}
+
+
 def _prepared(path: str | Path, plugin_id: str, plugin_version: str, contract: VisionContract) -> dict:
     """Create the only permitted material-handle fields.
 
@@ -94,12 +110,17 @@ def _verify_source_handle(captured: PreparedSource, contract: VisionContract, pl
 
 
 def _materialized(
-    path: Path, captured: PreparedSource, contract: VisionContract, plugin: SourceAdapter
+    path: Path,
+    captured: PreparedSource,
+    contract: VisionContract,
+    plugin: SourceAdapter,
+    *,
+    lineage_path: Path | None = None,
 ) -> MaterializedOnnx:
     if path.is_symlink() or not path.is_file() or path.suffix.lower() != ".onnx":
         raise ValueError("provider export did not produce a regular .onnx file")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    lineage = path.with_suffix(path.suffix + ".lineage.json")
+    lineage = lineage_path or path.with_suffix(path.suffix + ".lineage.json")
     body = {
         "schema": 1,
         "source_sha256": captured.sha256,
@@ -108,7 +129,17 @@ def _materialized(
         "source_plugin_version": plugin.plugin_version,
         "contract_digest": contract.digest,
     }
-    lineage.write_text(json.dumps(body, sort_keys=True, separators=(",", ":")))
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    if lineage.exists() or lineage.is_symlink():
+        if lineage.is_symlink() or not lineage.is_file() or lineage.read_bytes() != payload:
+            raise ValueError("materialized ONNX lineage publication is not coherent")
+    else:
+        # Legacy providers publish only a regular file; RF-DETR publishes its
+        # sidecar before its visible ONNX replacement below.
+        with lineage.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
     materialized = MaterializedOnnx(
         path,
         digest,
@@ -117,7 +148,7 @@ def _materialized(
         plugin.plugin_version,
         contract.digest,
         lineage,
-        hashlib.sha256(lineage.read_bytes()).hexdigest(),
+        hashlib.sha256(payload).hexdigest(),
         "",
     )
     return plugin._issue_materialization(materialized, captured, contract)
@@ -165,6 +196,37 @@ def _verify_materialized_boundary(
     ):
         raise ValueError("materialized ONNX is not bound to the captured source")
     _verify_materialized_onnx(materialized, contract)
+
+
+def neutral_onnx_request(
+    materialized: MaterializedOnnx, captured: PreparedSource, source: SourceAdapter, contract: VisionContract
+) -> NeutralOnnxRequest:
+    """Verify provider provenance once, before any target is invoked."""
+    _verify_materialized_boundary(materialized, captured, contract)
+    if not source.verify_materialization(materialized, captured, contract):
+        raise ValueError("materialized ONNX lacks an in-process source receipt")
+    _NEUTRAL_RECEIPTS[materialized.receipt] = (
+        materialized.sha256,
+        materialized.lineage_sha256,
+        captured.sha256,
+        contract.digest,
+    )
+    request = NeutralOnnxRequest(materialized, contract, secrets.token_urlsafe(32))
+    _NEUTRAL_REQUESTS[request._token] = request
+    return request
+
+
+def _verify_neutral_request(request: NeutralOnnxRequest) -> MaterializedOnnx:
+    if type(request) is not NeutralOnnxRequest or type(request.contract) is not VisionContract:
+        raise ValueError("target requires a centrally verified neutral ONNX request")
+    if _NEUTRAL_REQUESTS.get(request._token) is not request:
+        raise ValueError("neutral ONNX request was not centrally issued")
+    materialized, contract = request.materialized, request.contract
+    receipt = _NEUTRAL_RECEIPTS.get(materialized.receipt)
+    if receipt != (materialized.sha256, materialized.lineage_sha256, materialized.source_sha256, contract.digest):
+        raise ValueError("neutral ONNX request lacks exact central attestation")
+    _verify_materialized_onnx(materialized, contract)
+    return materialized
 
 
 def _validate_onnx_contract(path: Path, contract: VisionContract) -> None:
@@ -276,17 +338,15 @@ class TargetPlugin(ABC):
     @abstractmethod
     def build(self, captured: Any, candidate: Any, output: Path | None = None) -> Any: ...
 
-    def prepare_materialized(
-        self,
-        materialized: MaterializedOnnx,
-        captured_source: PreparedSource,
-        source: SourceAdapter,
-        contract: VisionContract,
-    ) -> PreparedArtifact:
+    def prepare_materialized(self, request: NeutralOnnxRequest, *legacy_args: Any) -> PreparedArtifact:
         """The sole provider-neutral target preparation boundary."""
-        _verify_materialized_boundary(materialized, captured_source, contract)
-        if not source.verify_materialization(materialized, captured_source, contract):
-            raise ValueError("materialized ONNX lacks an in-process source receipt")
+        if legacy_args:
+            raise TypeError(
+                "vision-buildkit 0.2 migration: prepare_materialized accepts exactly one sealed "
+                "NeutralOnnxRequest; the legacy four-argument provider call is unsupported"
+            )
+        materialized = _verify_neutral_request(request)
+        contract = request.contract
         return self._prepare_onnx(materialized.material_path, materialized, contract)
 
     def _prepare_onnx(self, source: Path, materialized: MaterializedOnnx, contract: VisionContract) -> PreparedArtifact:
@@ -355,7 +415,7 @@ class LegacyAdapterSource(SourceAdapter):
 
 
 class OnnxRuntimeTargetPlugin(TargetPlugin):
-    """Lazy, real ONNX Runtime target for declared boxes/scores/classes outputs."""
+    """Lazy, real ONNX Runtime target for frozen detection output contracts."""
 
     plugin_id = "onnxruntime"
     capabilities = Capabilities(
@@ -407,11 +467,35 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
     ) -> PreparedArtifact:
         if contract is None:
             raise ValueError("ONNX Runtime target requires VisionContract")
-        if (
-            contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
-            or contract.result.box_format != "xyxy"
+        rfdetr_raw = (
+            contract.raw_output.semantics == "custom"
+            and contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1"
+            and contract.result.box_format == "cxcywh"
+        )
+        rtdetr_raw = contract.raw_output.semantics == "rtdetr_combined"
+        if rtdetr_raw and (
+            contract.result.box_format != "xyxy"
+            or contract.result.coordinate_space != "original_image"
+            or contract.result.nms_owner != "none"
+            or contract.result.suppression != "none"
+            or contract.result.ordering != "score_desc"
+            or contract.result.tie_policy != "class_then_box"
+            or contract.result.top_k != 300
+            or contract.result.max_detections != 300
         ):
-            raise ValueError("ONNX Runtime target supports declared xyxy separate outputs or yolo_end2end only")
+            raise ValueError("ONNX RT-DETR result contract contradicts the frozen NMS-free semantics")
+        if (
+            (
+                contract.raw_output.semantics not in {"boxes_scores_classes", "yolo_end2end"}
+                or contract.result.box_format != "xyxy"
+            )
+            and not rfdetr_raw
+            and not rtdetr_raw
+        ):
+            raise ValueError(
+                "ONNX Runtime target supports declared xyxy separate outputs, yolo_end2end, "
+                "or the frozen RF-DETR/RT-DETR raw ABIs"
+            )
         if contract.result.coordinate_space != "original_image":
             raise ValueError("ONNX Runtime target requires original_image coordinate semantics")
         path = Path(source)
@@ -447,6 +531,23 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
                 or observed.shape[-1] != 6
             ):
                 raise ValueError("ONNX yolo_end2end output does not match contract")
+        if rfdetr_raw and tuple((item.name, item.dtype, item.shape) for item in contract.raw_output.tensors) != (
+            ("dets", "float32", (1, 300, 4)),
+            ("labels", "float32", (1, 300, 91)),
+        ):
+            raise ValueError("ONNX RF-DETR output contract does not match the frozen raw ABI")
+        if rtdetr_raw:
+            expected = (("output0", "float32", (1, 300, 6)),)
+            if tuple((item.name, item.dtype, item.shape) for item in contract.raw_output.tensors) != expected:
+                raise ValueError("ONNX RT-DETR output contract does not match the frozen raw ABI")
+            observed = outputs[0] if len(outputs) == 1 else None
+            if (
+                observed is None
+                or observed.name != "output0"
+                or observed.type != "tensor(float)"
+                or tuple(observed.shape) != (1, 300, 6)
+            ):
+                raise ValueError("ONNX RT-DETR runtime output does not match exact float32 [1,300,6]")
         roles = contract.raw_output.roles or {}
         for role, expected in roles.items():
             observed = next((item for item in outputs if item.name == expected), None)
@@ -469,6 +570,10 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
             ("source_sha256", lineage_source),
             ("artifact_sha256", artifact_sha),
         ]
+        if rtdetr_raw:
+            from .decoders import RTDETR_COMBINED_ABI
+
+            descriptors.append(("decoder_abi", RTDETR_COMBINED_ABI))
         if materialized:
             descriptors.extend(
                 [
@@ -539,6 +644,12 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
             return False
         origin = descriptors.get("origin")
         direct_keys = {"origin", "contract_json", "source_sha256", "artifact_sha256"}
+        if contract.raw_output.semantics == "rtdetr_combined":
+            from .decoders import RTDETR_COMBINED_ABI
+
+            direct_keys.add("decoder_abi")
+            if descriptors.get("decoder_abi") != RTDETR_COMBINED_ABI:
+                return False
         export_keys = direct_keys | {"source_plugin", "source_plugin_version", "lineage_path", "lineage_sha256"}
         if (
             (origin == "direct_source" and set(descriptors) != direct_keys)
@@ -619,6 +730,8 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
         if not contract_json:
             raise ValueError("ONNX artifact lacks immutable contract descriptor")
         contract = VisionContract.model_validate_json(contract_json)
+        if contract.raw_output.semantics == "rtdetr_combined" and sample.trace is None:
+            raise ValueError("rtdetr_combined requires geometry trace")
         session = self._verified_session(artifact, contract)
         execution_metadata = self._assert_cpu_execution_provider(session)
         values = session.run(None, {session.get_inputs()[0].name: sample.tensor})
@@ -631,6 +744,22 @@ class OnnxRuntimeTargetPlugin(TargetPlugin):
 
             result = yolo_end2end_contract(
                 tensors[contract.raw_output.tensors[0].name], sample.trace, contract, image_size=sample.image_size
+            )
+            result.metadata.update(execution_metadata | {"input_sha256": sample.input_sha256})
+            return result
+        if contract.raw_output.semantics == "custom" and contract.raw_output.decoder_plugin == "rfdetr.sigmoid_coco_v1":
+            from .decoders import rfdetr_contract_output
+
+            result = rfdetr_contract_output(
+                {"dets": tensors["dets"], "labels": tensors["labels"]}, sample.image_size, contract
+            )
+            result.metadata.update(execution_metadata | {"input_sha256": sample.input_sha256})
+            return result
+        if contract.raw_output.semantics == "rtdetr_combined":
+            from .decoders import rtdetr_combined_v1_contract
+
+            result = rtdetr_combined_v1_contract(
+                tensors["output0"], sample.trace, contract, image_size=sample.image_size
             )
             result.metadata.update(execution_metadata | {"input_sha256": sample.input_sha256})
             return result
@@ -795,17 +924,18 @@ class TensorRTTargetPlugin(TargetPlugin):
     def build(self, captured, candidate, output=None):
         raise RuntimeError("use BuildPlanner.materialize with a verified source, ONNX receipt, and VisionContract")
 
-    def prepare_materialized(self, materialized, captured_source, source, contract):
-        # Preserve TargetPlugin's receipt + source/lineage checks before doing
-        # any subprocess work.  Never accept an ONNX path alone here.
-        _verify_materialized_boundary(materialized, captured_source, contract)
-        if not source.verify_materialization(materialized, captured_source, contract):
-            raise ValueError("materialized ONNX lacks an in-process source receipt")
-        return self._prepare_from_materialized(materialized, captured_source, contract)
+    def prepare_materialized(self, request: NeutralOnnxRequest, *legacy_args: Any):
+        if legacy_args:
+            raise TypeError(
+                "vision-buildkit 0.2 migration: prepare_materialized accepts exactly one sealed "
+                "NeutralOnnxRequest; the legacy four-argument provider call is unsupported"
+            )
+        # The planner has already verified source provenance.  Do not retain or
+        # invoke a provider here: this target receives neutral, attested bytes.
+        materialized = _verify_neutral_request(request)
+        return self._prepare_from_materialized(materialized, request.contract)
 
-    def _prepare_from_materialized(
-        self, materialized: MaterializedOnnx, captured: PreparedSource, contract: VisionContract
-    ) -> PreparedArtifact:
+    def _prepare_from_materialized(self, materialized: MaterializedOnnx, contract: VisionContract) -> PreparedArtifact:
         if self.engine_output is None:
             raise ValueError("TensorRT target requires an explicit engine_output")
         if contract.input.layout != "NCHW":
@@ -929,7 +1059,7 @@ class TensorRTTargetPlugin(TargetPlugin):
                 "source_plugin_version": materialized.plugin_version,
                 "target_plugin": self.plugin_id,
                 "target_plugin_version": self.plugin_version,
-                "source_sha256": captured.sha256,
+                "source_sha256": materialized.source_sha256,
                 "onnx_sha256": materialized.sha256,
                 "onnx_lineage": lineage_body,
                 "onnx_lineage_sha256": materialized.lineage_sha256,
@@ -960,7 +1090,7 @@ class TensorRTTargetPlugin(TargetPlugin):
             )
             descriptors = (
                 ("contract_json", contract.canonical_json()),
-                ("source_sha256", captured.sha256),
+                ("source_sha256", materialized.source_sha256),
                 ("onnx_sha256", materialized.sha256),
                 ("engine_sha256", engine_sha),
                 ("build_log_sha256", log_sha),
@@ -1224,10 +1354,11 @@ def make_tensorrt_target(**config: Any) -> TensorRTTargetPlugin:
 DEFAULT_REGISTRY = PluginRegistry()
 DEFAULT_REGISTRY.register_source(PythonObjectSource())
 DEFAULT_REGISTRY.register_source(ManualOnnxSource())
-from .providers import LibreYoloSourceAdapter, UltralyticsSourceAdapter  # noqa: E402
+from .providers import LibreYoloSourceAdapter, RFDetrSourceAdapter, UltralyticsSourceAdapter  # noqa: E402
 
 DEFAULT_REGISTRY.register_source(UltralyticsSourceAdapter())
 DEFAULT_REGISTRY.register_source(LibreYoloSourceAdapter())
+DEFAULT_REGISTRY.register_source(RFDetrSourceAdapter())
 try:
     metadata.version("onnxruntime")
     DEFAULT_REGISTRY.register_target(OnnxRuntimeTargetPlugin())

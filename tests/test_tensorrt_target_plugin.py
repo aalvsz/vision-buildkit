@@ -22,6 +22,7 @@ from vision.plugins import (
     SourceAdapter,
     TensorRTTargetPlugin,
     make_tensorrt_target,
+    neutral_onnx_request,
 )
 
 
@@ -109,6 +110,10 @@ def materialized(tmp_path: Path):
     return source._issue_materialization(raw, captured, value), captured, source, value
 
 
+def request(material, captured, source, value):
+    return neutral_onnx_request(material, captured, source, value)
+
+
 def install_build_mock(monkeypatch):
     import vision.plugins as plugins
 
@@ -141,6 +146,16 @@ def test_registry_does_not_advertise_an_unconfigured_tensorrt_target():
     assert isinstance(make_tensorrt_target(engine_output="x.engine"), TensorRTTargetPlugin)
 
 
+def test_tensorrt_rejects_legacy_four_argument_prepare_before_verification(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr("vision.plugins._verify_neutral_request", lambda request: calls.append(request))
+    plugin = TensorRTTargetPlugin(engine_output=tmp_path / "artifact.engine")
+    with pytest.raises(TypeError, match=r"0\.2 migration.*exactly one sealed NeutralOnnxRequest"):
+        plugin.prepare_materialized(object(), object(), object(), object())
+    assert calls == []
+    assert not (tmp_path / "artifact.engine").exists()
+
+
 def test_build_binds_engine_log_lineage_precision_and_tamper(tmp_path, monkeypatch):
     install_build_mock(monkeypatch)
     material, captured, source, value = materialized(tmp_path)
@@ -149,7 +164,7 @@ def test_build_binds_engine_log_lineage_precision_and_tamper(tmp_path, monkeypat
         precision="fp16",
         trtexec_path="/fake/trtexec",
     )
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     fields = dict(artifact.descriptors)
     assert artifact.material_path.read_bytes() == b"engine"
     assert fields["requested_precision"] == "fp16"
@@ -170,12 +185,14 @@ def test_rejects_existing_output_bad_precision_and_no_receipt(tmp_path, monkeypa
     output = tmp_path / "x.engine"
     output.write_bytes(b"stale")
     with pytest.raises(ValueError, match="must not already exist"):
-        TensorRTTargetPlugin(engine_output=output).prepare_materialized(material, captured, source, value)
+        TensorRTTargetPlugin(engine_output=output).prepare_materialized(request(material, captured, source, value))
     clean = tmp_path / "clean.engine"
     with pytest.raises(ValueError, match="receipt"):
         TensorRTTargetPlugin(engine_output=clean).prepare_materialized(
-            replace(material, receipt="forged"), captured, source, value
+            request(replace(material, receipt="forged"), captured, source, value)
         )
+    with pytest.raises(ValueError, match="centrally verified"):
+        TensorRTTargetPlugin(engine_output=tmp_path / "dict.engine").prepare_materialized({})
 
 
 def test_rejects_symbolic_shapes_and_target_nms(tmp_path, monkeypatch):
@@ -183,14 +200,10 @@ def test_rejects_symbolic_shapes_and_target_nms(tmp_path, monkeypatch):
     material, captured, source, value = materialized(tmp_path)
     symbolic = value.model_copy(update={"input": value.input.model_copy(update={"shape": ("N", 3, 32, 32)})})
     with pytest.raises(ValueError, match="symbolic/dynamic"):
-        TensorRTTargetPlugin(engine_output=tmp_path / "dynamic.engine")._prepare_from_materialized(
-            material, captured, symbolic
-        )
+        TensorRTTargetPlugin(engine_output=tmp_path / "dynamic.engine")._prepare_from_materialized(material, symbolic)
     target_nms = value.model_copy(update={"result": value.result.model_copy(update={"nms_owner": "target"})})
     with pytest.raises(ValueError, match="does not execute"):
-        TensorRTTargetPlugin(engine_output=tmp_path / "nms.engine")._prepare_from_materialized(
-            material, captured, target_nms
-        )
+        TensorRTTargetPlugin(engine_output=tmp_path / "nms.engine")._prepare_from_materialized(material, target_nms)
 
 
 @pytest.mark.parametrize("shape", ((1, 32, 32, 3), (1, 3, 32, 32)))
@@ -199,9 +212,7 @@ def test_tensorrt_rejects_nhwc_contract_even_when_shape_looks_plausible(tmp_path
     material, captured, _source, value = materialized(tmp_path)
     nhwc = value.model_copy(update={"input": value.input.model_copy(update={"layout": "NHWC", "shape": shape})})
     with pytest.raises(ValueError, match="NCHW"):
-        TensorRTTargetPlugin(engine_output=tmp_path / f"{shape[-1]}.engine")._prepare_from_materialized(
-            material, captured, nhwc
-        )
+        TensorRTTargetPlugin(engine_output=tmp_path / f"{shape[-1]}.engine")._prepare_from_materialized(material, nhwc)
 
 
 def test_fp32_tactics_no_tf32_command_is_build_only():
@@ -220,7 +231,7 @@ def test_atomic_failure_leaves_no_engine_or_log(tmp_path, monkeypatch):
     )
     output = tmp_path / "failed.engine"
     with pytest.raises(RuntimeError, match="fail"):
-        TensorRTTargetPlugin(engine_output=output).prepare_materialized(material, captured, source, value)
+        TensorRTTargetPlugin(engine_output=output).prepare_materialized(request(material, captured, source, value))
     assert not output.exists() and not output.with_suffix(".engine.build.log").exists()
 
 
@@ -228,7 +239,7 @@ def test_artifact_receipt_is_relocatable_and_engine_tamper_is_rejected(tmp_path,
     install_build_mock(monkeypatch)
     material, captured, source, value = materialized(tmp_path)
     plugin = TensorRTTargetPlugin(engine_output=tmp_path / "safe.engine")
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     moved = tmp_path / "relocated.engine"
     moved.write_bytes(artifact.material_path.read_bytes())
     relocated = replace(artifact, material_path=moved)
@@ -242,7 +253,7 @@ def test_process_attested_receipt_rejects_four_descriptor_forgeries(tmp_path, mo
     install_build_mock(monkeypatch)
     material, captured, source, value = materialized(tmp_path)
     plugin = TensorRTTargetPlugin(engine_output=tmp_path / "forgery.engine")
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     descriptors = dict(artifact.descriptors)
     descriptors[field] = "0" * 64 if field != "target_receipt" else "forged"
     forged = replace(artifact, descriptors=tuple(descriptors.items()))
@@ -305,7 +316,7 @@ def test_real_tensorrt_attestation_negative_matrix_rejects_portable_verification
     )
     material, captured, source, value = materialized(tmp_path)
     plugin = TensorRTTargetPlugin(engine_output=tmp_path / "matrix.engine")
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     receipt = json.loads(dict(artifact.descriptors)["build_receipt_json"])
     runtime = SimpleNamespace(
         backend="tensorrt",
@@ -367,7 +378,7 @@ def test_runtime_requires_tensor_cuda_and_decodes_contract_output(tmp_path, monk
     install_build_mock(monkeypatch)
     material, captured, source, value = materialized(tmp_path)
     plugin = TensorRTTargetPlugin(engine_output=tmp_path / "run.engine")
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     image = tmp_path / "input.png"
     Image.new("RGB", (10, 8), "white").save(image)
     prepared = plugin.prepare_input(artifact, image, value)
@@ -405,7 +416,7 @@ def test_runtime_rejects_engine_interface_shape_or_dtype(tmp_path, monkeypatch):
     install_build_mock(monkeypatch)
     material, captured, source, value = materialized(tmp_path)
     plugin = TensorRTTargetPlugin(engine_output=tmp_path / "wrong.engine")
-    artifact = plugin.prepare_materialized(material, captured, source, value)
+    artifact = plugin.prepare_materialized(request(material, captured, source, value))
     image = tmp_path / "input.png"
     Image.new("RGB", (10, 8), "white").save(image)
     prepared = plugin.prepare_input(artifact, image, value)

@@ -15,7 +15,14 @@ from test_buildkit import contract
 from vision.buildkit import BuildPlanner
 from vision.contract import VisionContract
 from vision.decoders import yolo_end2end_contract
-from vision.plugins import DEFAULT_REGISTRY, MaterializedOnnx, OnnxRuntimeTargetPlugin, PreparedSource
+from vision.plugins import (
+    DEFAULT_REGISTRY,
+    MaterializedOnnx,
+    OnnxRuntimeTargetPlugin,
+    PreparedSource,
+    TargetPlugin,
+    neutral_onnx_request,
+)
 from vision.processing import GeometryTrace
 from vision.providers import LibreYoloSourceAdapter, UltralyticsSourceAdapter
 
@@ -182,6 +189,25 @@ def _image_bytes(tmp_path):
     return path, path.read_bytes()
 
 
+def test_target_base_and_ort_reject_legacy_four_argument_prepare_before_verification(monkeypatch):
+    calls = []
+    monkeypatch.setattr("vision.plugins._verify_neutral_request", lambda request: calls.append(request))
+
+    class MinimalTarget(TargetPlugin):
+        plugin_id, plugin_version = "minimal", "1"
+
+        def build(self, captured, candidate, output=None):
+            raise AssertionError("must not build")
+
+        def run(self, artifact, sample):
+            raise AssertionError("must not run")
+
+    for target in (MinimalTarget(), OnnxRuntimeTargetPlugin()):
+        with pytest.raises(TypeError, match=r"0\.2 migration.*exactly one sealed NeutralOnnxRequest"):
+            target.prepare_materialized(object(), object(), object(), object())
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("adapter_type", "module"), [(UltralyticsSourceAdapter, "ultralytics"), (LibreYoloSourceAdapter, "libreyolo")]
 )
@@ -212,8 +238,8 @@ def test_provider_reference_and_neutral_materialization(monkeypatch, tmp_path, a
     assert materialized.sha256 == _sha(output)
     assert materialized.lineage_path.is_file()
 
-    # The planner calls the provider only through SourceAdapter.materialize_onnx;
-    # target preparation receives an ONNX path and lineage digest, never provider identity.
+    # The planner attests provider provenance before target invocation; targets
+    # receive only an opaque neutral request, never a provider runtime.
     target = OnnxRuntimeTargetPlugin()
     _, neutral, artifact = BuildPlanner().materialize(adapter, target, str(checkpoint), value, str(output))
     assert neutral.material_path == output
@@ -229,13 +255,14 @@ def test_provider_reference_and_neutral_materialization(monkeypatch, tmp_path, a
         neutral.lineage_sha256,
         "self-authored",
     )
-    with pytest.raises(ValueError, match="receipt"):
-        target.prepare_materialized(fabricated, captured, adapter, value)
+    with pytest.raises(ValueError, match="centrally verified"):
+        target.prepare_materialized(fabricated)
     assert target.verify_artifact(artifact, value)
     assert not target.verify_artifact(replace(artifact, descriptors=artifact.descriptors[:-1]), value)
+    request = neutral_onnx_request(neutral, captured, adapter, value)
     neutral.lineage_path.write_text("{}")
     with pytest.raises(ValueError, match="lineage"):
-        target.prepare_materialized(neutral, captured, adapter, value)
+        target.prepare_materialized(request)
 
 
 def test_provider_rehashes_before_run_and_export(monkeypatch, tmp_path):

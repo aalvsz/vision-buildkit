@@ -64,9 +64,15 @@ class OutputSpec(_Strict):
 
 
 class DecoderSpec(_Strict):
-    kind: Literal["yolo_end2end", "yolo_raw", "detr", "rtdetr_combined", "rfdetr", "boxes_scores_classes"] = (
-        "yolo_end2end"
-    )
+    kind: Literal[
+        "yolo_end2end",
+        "yolo_raw",
+        "detr",
+        "rtdetr_combined",
+        "rtdetr_combined_v1",
+        "rfdetr",
+        "boxes_scores_classes",
+    ] = "yolo_end2end"
     score_threshold: float = Field(default=0.25, ge=0, le=1)
     iou_threshold: float = Field(default=0.45, ge=0, le=1)
     top_k: int = Field(default=300, gt=0)
@@ -169,10 +175,26 @@ class VisionManifest(_Strict):
                 raise ValueError(f"RF-DETR {self.variant or 'nano'} requires a {expected}x{expected} input")
         if self.decoder.kind == "rfdetr" and not self.decoder.boxes_normalized:
             raise ValueError("RF-DETR ONNX boxes must be normalized cxcywh")
-        if self.decoder.kind == "rtdetr_combined" and not self.decoder.boxes_normalized:
+        if self.decoder.kind in {"rtdetr_combined", "rtdetr_combined_v1"} and not self.decoder.boxes_normalized:
             raise ValueError("RT-DETR combined boxes must be normalized cxcywh")
-        if self.decoder.kind in {"rfdetr", "rtdetr_combined"} and self.output.box_format != "cxcywh":
+        if (
+            self.decoder.kind in {"rfdetr", "rtdetr_combined", "rtdetr_combined_v1"}
+            and self.output.box_format != "cxcywh"
+        ):
             raise ValueError("normalized DETR decoder outputs must declare cxcywh boxes")
+        if self.decoder.kind == "rtdetr_combined_v1":
+            from .contract import VisionContract
+
+            if self.contract is None:
+                raise ValueError("rtdetr_combined_v1 requires an embedded RT-DETR VisionContract")
+            try:
+                certified = VisionContract.model_validate(self.contract)
+            except ValueError as error:
+                raise ValueError("rtdetr_combined_v1 requires an exact valid VisionContract") from error
+            if certified.raw_output.semantics != "rtdetr_combined":
+                raise ValueError("rtdetr_combined_v1 requires an embedded RT-DETR VisionContract")
+        if self.decoder.kind == "rtdetr_combined" and self.contract is not None:
+            raise ValueError("legacy rtdetr_combined manifests cannot carry a certified VisionContract")
         return self
 
     @classmethod
@@ -208,21 +230,24 @@ def validate_contract_equivalence(manifest: VisionManifest, contract) -> None:
         raise ValueError("manifest resize contradicts VisionContract")
     if isinstance(geometry, Letterbox) and manifest.preprocessing.padding != geometry.pad_value:
         raise ValueError("manifest letterbox padding contradicts VisionContract")
-    if manifest.output.box_format != contract.result.box_format:
+    expected_box_format = "cxcywh" if contract.raw_output.semantics == "rtdetr_combined" else contract.result.box_format
+    if manifest.output.box_format != expected_box_format:
         raise ValueError("manifest box format contradicts VisionContract")
     roles = contract.raw_output.roles or {}
     output_names = (manifest.output.boxes_name, manifest.output.scores_name, manifest.output.labels_name)
     required_names = (
         (contract.raw_output.tensors[0].name, None, None)
-        if contract.raw_output.semantics == "yolo_end2end"
+        if contract.raw_output.semantics in {"yolo_end2end", "rtdetr_combined"}
         else (roles.get("boxes"), roles.get("scores"), roles.get("classes"))
     )
     if output_names != required_names or manifest.output.logits_name is not None:
         raise ValueError("manifest output roles contradict VisionContract")
     decoder = manifest.decoder
-    expected_decoder = {"boxes_scores_classes": "boxes_scores_classes", "yolo_end2end": "yolo_end2end"}.get(
-        contract.raw_output.semantics
-    )
+    expected_decoder = {
+        "boxes_scores_classes": "boxes_scores_classes",
+        "yolo_end2end": "yolo_end2end",
+        "rtdetr_combined": "rtdetr_combined_v1",
+    }.get(contract.raw_output.semantics)
     if expected_decoder is None:
         raise ValueError(f"VisionManifest cannot certify raw output semantics {contract.raw_output.semantics!r}")
     if decoder.kind != expected_decoder:
@@ -251,9 +276,11 @@ def manifest_from_contract(source: str, contract, *, family: str = "onnx") -> Vi
     from .contract import Letterbox, Resize
 
     geometry = next(item for item in contract.preprocessing if isinstance(item, (Resize, Letterbox)))
-    decoder_kind = {"boxes_scores_classes": "boxes_scores_classes", "yolo_end2end": "yolo_end2end"}.get(
-        contract.raw_output.semantics
-    )
+    decoder_kind = {
+        "boxes_scores_classes": "boxes_scores_classes",
+        "yolo_end2end": "yolo_end2end",
+        "rtdetr_combined": "rtdetr_combined_v1",
+    }.get(contract.raw_output.semantics)
     if decoder_kind is None:
         raise ValueError(f"VisionManifest cannot certify raw output semantics {contract.raw_output.semantics!r}")
     roles = contract.raw_output.roles or {}
@@ -281,7 +308,9 @@ def manifest_from_contract(source: str, contract, *, family: str = "onnx") -> Vi
             "input_name": contract.input.input_name,
         },
         output={
-            "box_format": contract.result.box_format,
+            "box_format": (
+                "cxcywh" if contract.raw_output.semantics == "rtdetr_combined" else contract.result.box_format
+            ),
             "boxes_name": roles.get("boxes") or contract.raw_output.tensors[0].name,
             "scores_name": roles.get("scores"),
             "labels_name": roles.get("classes"),
@@ -289,6 +318,7 @@ def manifest_from_contract(source: str, contract, *, family: str = "onnx") -> Vi
         preprocessing=preprocessing,
         decoder={
             "kind": decoder_kind,
+            "boxes_normalized": contract.raw_output.semantics == "rtdetr_combined",
             "score_threshold": contract.result.score_threshold,
             "iou_threshold": contract.result.nms_iou_threshold or 0.45,
             "top_k": min(contract.result.top_k or contract.result.max_detections, contract.result.max_detections),

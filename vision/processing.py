@@ -22,7 +22,7 @@ class GeometryTrace:
         """Compatibility accessor; valid only for aspect-preserving letterbox."""
         return self.scale_x
 
-    def inverse(self, box: Box) -> Box:
+    def inverse(self, box: Box, *, clip: bool = True) -> Box:
         width, height = self.original
         coords = (
             (box.x1 - self.pad_x) / self.scale_x,
@@ -30,6 +30,8 @@ class GeometryTrace:
             (box.x2 - self.pad_x) / self.scale_x,
             (box.y2 - self.pad_y) / self.scale_y,
         )
+        if not clip:
+            return Box(*coords)
         return Box(
             max(0, min(width, coords[0])),
             max(0, min(height, coords[1])),
