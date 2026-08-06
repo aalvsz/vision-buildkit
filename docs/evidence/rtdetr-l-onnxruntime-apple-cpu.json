@@ -1,0 +1,60 @@
+{
+    "schema_version": 1,
+    "status": "PASS",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "RT-DETR-L",
+    "task": "object_detection",
+    "host": {
+        "architecture": "arm64",
+        "device": "Apple Silicon CPU",
+        "os": "macOS 26.3.1",
+        "runtime": "ONNX Runtime CPUExecutionProvider"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97,
+        "derived_manifest_digest": "e5fc20dd65085c1966be213051d4223a81426415bdb65146ac20c0e18d237144"
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.1,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.464263,
+            "detections": 173
+        },
+        "onnxruntime_fp32": {
+            "map_50_95": 0.464263,
+            "map_drop": 0.0,
+            "coverage": 1.0,
+            "matched": 173,
+            "lost": 0,
+            "added": 0,
+            "class_mismatches": 0,
+            "max_score_delta": 0.000011,
+            "mean_iou": 0.999832,
+            "min_iou": 0.987721
+        }
+    },
+    "bindings": {
+        "source_sha256": "6de60b10d4bc566f3635e9d0e95d2171effb7859d8e73f",
+        "onnx_sha256": "a5386605945d18ccbc17ce94a2765d51dada2cb20f0804c364e2051cc5066ee6",
+        "reference_predictions_sha256": "af8b688e6b11b6ff6174c0a6e7ff9a959992672f8456516714e453d7c2b4230b",
+        "candidate_predictions_sha256": "294f10a294bbb043ec63616b809b238412e07c5ac3bd8244f4e74831e272474d",
+        "contract_digest": "571a6b97405659c1"
+    },
+    "non_claims": [
+        "Not a full-COCO accuracy result.",
+        "Not a speedup claim.",
+        "Not signed, publishable runtime-policy evidence, or certification.",
+        "Does not verify RT-DETR on TensorRT, OpenVINO, or other targets.",
+        "Uses a pre-exported ONNX (opset>=16); no custom ONNX graph modifications."
+    ]
+}

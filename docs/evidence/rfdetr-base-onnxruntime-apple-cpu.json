@@ -1,0 +1,57 @@
+{
+    "schema_version": 1,
+    "status": "PASS",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "RF-DETR-Base",
+    "task": "object_detection",
+    "host": {
+        "architecture": "arm64",
+        "device": "Apple Silicon CPU",
+        "os": "macOS 26.3.1",
+        "runtime": "ONNX Runtime CPUExecutionProvider"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.1,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.361232,
+            "detections": 67
+        },
+        "onnxruntime_fp32": {
+            "map_50_95": 0.361338,
+            "map_drop": 0.0,
+            "coverage": 1.0,
+            "matched": 67,
+            "lost": 0,
+            "added": 0,
+            "class_mismatches": 0,
+            "max_score_delta": 0.001469,
+            "mean_iou": 0.999918,
+            "min_iou": 0.997598
+        }
+    },
+    "bindings": {
+        "onnx_sha256": "fed5547a0d22f91b777440f49ff2301c40d27e27af2de187e3c6567accab1200",
+        "reference_predictions_sha256": "3143985a2f35e0721db3de887fc5a5ae03f889619dcdfd2d40be70fdb0954fc4",
+        "candidate_predictions_sha256": "5ede8d43b1a6bf6fb3df2186fff0da2cceb713678e6aa937a8fac64c10797379"
+    },
+    "non_claims": [
+        "Not a full-COCO accuracy result.",
+        "Not a speedup claim.",
+        "Not signed, publishable runtime-policy evidence, or certification.",
+        "Does not verify RF-DETR on TensorRT, OpenVINO, or other targets.",
+        "Uses RF-DETR's official ONNX export via rfdetr.export(); no custom ONNX graph modifications."
+    ]
+}

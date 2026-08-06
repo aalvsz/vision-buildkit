@@ -1,0 +1,91 @@
+{
+    "schema_version": 1,
+    "status": "FAIL",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "YOLO26n",
+    "task": "object_detection",
+    "host": {
+        "architecture": "x86_64",
+        "device": "Axelera Metis AIPU (metis-0:3:0, hw_gen=omega, 4 AI cores, M.2 board)",
+        "os": "Ubuntu 24.04 (Linux 6.8.0, kernel module metis 1.5.5)",
+        "runtime": "Axelera runtime 1.7.0-1, firmware v1.7.0, pipe torch-aipu, INT8 per-tensor min-max quantization",
+        "python": "CPython 3.12"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97,
+        "calibration_images": 200,
+        "calibration_source": "Voyager SDK representative COCO val2017 images (data/coco2017_repr400)",
+        "calibration_method": "Axelera compiler per-tensor min-max quantization (yolo26.toml); 200 images sampled with default seed"
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.1,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.442554,
+            "detections": 57,
+            "score_threshold": 0.25
+        },
+        "axelera_aipu_int8": {
+            "map_50_95": 0.200382,
+            "map_drop": 0.242171,
+            "detections_at_threshold_025": 23,
+            "matched": 23,
+            "unmatched_ref": 34,
+            "unmatched_cand": 0,
+            "coverage": 0.403509,
+            "mean_iou_matched": 0.960547,
+            "min_iou_matched": 0.930195,
+            "max_iou_matched": 0.985364,
+            "mean_score_delta_matched": 0.078233,
+            "max_score_delta_matched": 0.37361,
+            "class_mismatches": 0,
+            "false_positives": 0,
+            "match": "FAIL"
+        }
+    },
+    "failure_analysis": {
+        "root_cause": "Axelera Metis AIPU INT8 per-tensor min-max quantization compresses the YOLO26n confidence head. Bounding-box localization is preserved (mean IoU 0.960547 on matched detections, all >= 0.93), but roughly half of the reference detections have their scores pushed below the 0.25 threshold, dropping both recall and mAP. There are no false positives, so the failure mode is undershoot (conservative scoring), not spurious detections.",
+        "what_works": "Pipeline deploys and runs successfully on the AIPU. Compiled kernel_function.elf executes on the AI cores, returns valid (300,6) NMS-free output, and postprocess (decodeyolo10) produces well-localized boxes in the correct image-pixel coordinate space.",
+        "what_does_not": "Confidence scores for low-to-mid-confidence detections are compressed below the parity threshold, so candidates that should match the FP32 reference at score >= 0.25 are emitted at < 0.25 and lost. Image 6818's true positive dropped from FP32 score 0.516 to INT8 score 0.303 (~41% relative drop) just below the 0.4 inference threshold but above the 0.25 parity gate.",
+        "quantization_scheme_limitation": "per_tensor_min_max is the only scheme that compiled successfully for this ONNX. hybrid_per_tensor_per_channel failed during prequantization with 'At least one pinned zero (zero_point=0) input is needed for inputs to MatMul ops' (Axelera compiler limitation on the YOLO26n confidence MatMul). per_tensor_histogram failed with the same MatMul zero-point error. SmoothQuant (coefficient 0.5) compiled and ran but produced effectively identical scores, confirming the issue is in the activation range of the score path rather than weight quantization.",
+        "fp32_not_attempted": "The Metis AIPU is an INT8 inference accelerator by design; FP32 execution is not an AIPU execution mode. The torch-aipu pipe quantizes-then-runs on the AI cores; there is no native FP32 Metis path for the AIPU. A torch pipe (no AIPU) would run on the host CPU and is not a Metis-AIPU result; that path was not tested for parity.",
+        "calibration_note": "200 representative COCO val2017 images were used (the deploy default), not the few-shot 10-image gate subset. Even with the larger representative calibration set, INT8 still collapsed scores, which indicates the issue is the quantization of the YOLO26n e2e confidence path rather than calibration data quantity."
+    },
+    "bindings": {
+        "candidate_results_sha256": "22713fbb8459b501daf190040359d7b0c97892a9983322ec1cdae80f35389919",
+        "reference_results_sha256": "48e9ba3fb417a170c41d06ca2e3ee99d1deb9a37e0e565de43a0bb08a4bb047d",
+        "kernel_function_elf_sha256": "29a4ff3816864925374acbf801cddc9174fcb2d4d6d6ed2e20ccf834716cb8d0",
+        "kernel_function_elf_md5": "e4b55b1d1626f0e72b720343c0cd3d75",
+        "manifest_sha256": "4a4b2ff76d190db93e99a0aae964bae884751dbbfcf7f18bf969930136ab75bc",
+        "manifest_md5": "41f5f5d485f7f11d34ef4194f665a7bc",
+        "source_onnx_sha256": "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c",
+        "source_onnx_md5": "4b9601d2f2d63a7533990feaa1b8887e",
+        "compiler_config": "per_tensor_min_max (yolo26.toml), no smoothquant, ignore_weight_buffers=false",
+        "deploy_mode": "QUANTCOMPILE",
+        "deploy_timestamp_utc": "2026-08-06T04:48:28Z"
+    },
+    "secure_execution": {
+        "sandbox": "none (Axelera Voyager SDK inference is run directly on the AIPU via the device file /dev/metis-0:3:0)",
+        "python_isolation": "none (Voyager SDK venv with system axelera runtime)",
+        "overlay_origin_enforced": false,
+        "note": "Unlike the Jetson TensorRT attempt, the Axelera run was not executed in a bubblewrap sandbox or under Python -I isolation; the AIPU inference is delegated to the compiled kernel_function.elf on the device. This evidence is therefore lower-integrity than the Jetson TensorRT evidence."
+    },
+    "non_claims": [
+        "Not a certification or signed result.",
+        "Not a claim that Axelera Metis INT8 cannot work for YOLO26n; only that it failed the parity gate under the default compiler configuration.",
+        "Per-channel or smoother quantization (e.g., PTQ with QAT) may achieve a passing result, but hybrid_per_tensor_per_channel, per_tensor_histogram, and SmoothQuant 0.5 were all tried and did not improve the score distribution.",
+        "Not an FP32 result; the Metis AIPU is INT8 only and no FP32 AIPU execution was tested.",
+        "Not a speedup or throughput claim; the run interleaved with other AIPU tenants and no latency benchmark is reported.",
+        "Evidence is from a single Axelera Metis M.2 unit; not a cross-hardware claim.",
+        "The Chameleon streaming-translation service occupying the device was stopped to free the AI cores, then restarted after the run; this is documented for provenance."
+    ]
+}

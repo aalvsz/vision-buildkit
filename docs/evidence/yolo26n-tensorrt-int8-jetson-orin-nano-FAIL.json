@@ -1,0 +1,119 @@
+{
+    "schema_version": 1,
+    "status": "FAIL",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "YOLO26n",
+    "task": "object_detection",
+    "host": {
+        "architecture": "aarch64",
+        "device": "NVIDIA Jetson Orin Nano (Orin)",
+        "os": "Linux (Yahboom)",
+        "runtime": "TensorRT 10.3.0",
+        "cuda": "torch 2.10.0 CUDA (Orin)"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97
+    },
+    "contract": {
+        "onnx_sha256": "91482a6698ae60d9f4f128239119f06e8637a85a525963f72eecca127224b618",
+        "onnx_path": "/home/jetson/vision-buildkit/attempt45-yolo26n-tensorrt/results/yolo26n.onnx"
+    },
+    "summary": "TensorRT INT8 engine build failed for the YOLO26n end-to-end ONNX graph. The error occurs during calibration graph optimization, not during calibration data feeding or inference. This is a TensorRT 10.3.0 internal assertion failure triggered by the end-to-end NMS topology (TopK/GatherElements/Gather ops) in the YOLO26n ONNX graph.",
+    "attempts": [
+        {
+            "method": "trtexec --int8 --calib=/dev/null --skipInference",
+            "result": "FAIL",
+            "error": "Error[2]: [checkSanity.cpp::checkLinks::218] Error Code 2: Internal Error (Assertion item.second != nullptr failed. region should have been removed from Graph::regions)",
+            "error_phase": "graph optimization on calibration graph",
+            "trtexec_version": "v100300",
+            "log_excerpt": "Perform graph optimization on calibration graph. → Error[2]: checkSanity.cpp::checkLinks:218 assertion failed"
+        },
+        {
+            "method": "Python API: IInt8EntropyCalibrator2 with 200 COCO val2017 calibration images",
+            "result": "FAIL",
+            "error": "Same checkSanity.cpp::checkLinks assertion error during build_serialized_network()",
+            "error_phase": "build_serialized_network (calibration graph optimization)",
+            "note": "Calibrator get_batch() was never called — the build fails before calibration data is needed, proving the error is in the graph optimization phase, not the calibration data"
+        },
+        {
+            "method": "Python API: IInt8EntropyCalibrator2 + CALIBRATE_BEFORE_FUSION quantization flag",
+            "result": "FAIL",
+            "error": "Same checkSanity.cpp::checkLinks assertion error",
+            "note": "CALIBRATE_BEFORE_FUSION flag (calibrate before graph fusion) did not work around the bug"
+        },
+        {
+            "method": "Python API: IInt8EntropyCalibrator2 + builder_optimization_level=0",
+            "result": "FAIL",
+            "error": "Same checkSanity.cpp::checkLinks assertion error",
+            "note": "Lowering optimization level to 0 (no graph optimization) did not help — the calibration graph itself fails"
+        },
+        {
+            "method": "trtexec --int8 --stronglyTyped --skipInference",
+            "result": "BUILD_SUCCEEDED but no actual INT8 quantization",
+            "engine_sha256": "fee0a165211f8a241771911c569d8bc8f00457eb55d4ad47e9e0997a07c42640",
+            "engine_size_bytes": 12473924,
+            "note": "The --stronglyTyped flag bypasses the checkLinks bug but creates a strongly-typed network that only uses INT8 where the ONNX has explicit Q/DQ (QuantizeDequantize) nodes. Since the YOLO26n ONNX has no Q/DQ nodes, this engine has all-FP32 I/O (DataType.FLOAT) and no actual INT8 layers. It is effectively an FP32 engine with INT8 flag. Layer count: 342. This is a valid engine but it is NOT an INT8 quantized model."
+        },
+        {
+            "method": "trtexec --int8 (no --calib, no --stronglyTyped)",
+            "result": "HANG",
+            "note": "Without a calibration cache, trtexec creates a default IInt8EntropyCalibrator2 but has no calibration data to feed. The process hangs indefinitely (killed after 5+ minutes). This is expected behavior — trtexec --int8 without --calib requires calibration data from a prior run."
+        }
+    ],
+    "root_cause_analysis": {
+        "error": "checkSanity.cpp::checkLinks:218 — Assertion item.second != nullptr failed. region should have been removed from Graph::regions",
+        "trigger": "The YOLO26n end-to-end ONNX graph contains a TopK + GatherElements + Gather pattern (from the baked-in NMS in model.23 head). During INT8 calibration graph optimization, TensorRT 10.3.0 attempts to optimize this pattern and hits an internal assertion failure in the region/link tracking.",
+        "why_fp32_fp16_work": "The FP32 and FP16 engines (from attempt45) build successfully because they don't use the INT8 calibration graph path — they use the standard graph optimization which handles the TopK/Gather pattern correctly.",
+        "why_stronglytyped_works_but_useless": "The --stronglyTyped path uses explicit quantization (Q/DQ nodes) instead of implicit calibration. Since it never enters the calibration graph optimization path, it avoids the bug. But without Q/DQ nodes in the ONNX, no layer is actually quantized to INT8.",
+        "potential_workarounds_not_attempted": [
+            "Export the YOLO26n model with explicit Q/DQ nodes (ONNX QuantizeDequantize ops) and use --stronglyTyped. This would require PyTorch quantization-aware training (QAT) or post-training quantization export, which is out of scope.",
+            "Export the YOLO26n model as a raw-output (non-e2e) ONNX without baked-in NMS. The TopK/GatherElements/Gather ops would be removed from the graph, allowing INT8 calibration of the Conv/MatMul layers. This requires modifying the model export and implementing NMS in post-processing.",
+            "Upgrade TensorRT to a version that fixes the checkLinks assertion. At the time of this test, TensorRT 10.3.0 is the latest available on Jetson Orin Nano."
+        ]
+    },
+    "onnx_graph_analysis": {
+        "node_count": 384,
+        "ops": ["Add", "Cast", "Concat", "Conv", "Div", "Expand", "Flatten", "Gather", "GatherElements", "MatMul", "MaxPool", "Mod", "Mul", "ReduceMax", "Reshape", "Resize", "Sigmoid", "Slice", "Softmax", "Split", "Sub", "TopK", "Transpose", "Unsqueeze"],
+        "nms_related_ops": {
+            "TopK": ["/model.23/TopK", "/model.23/TopK_1"],
+            "GatherElements": ["/model.23/GatherElements", "/model.23/GatherElements_1"],
+            "Gather": ["/model.23/Gather_3"],
+            "Slice": ["/model.23/Slice", "/model.23/Slice_1"]
+        },
+        "conv_matmul_count": 106,
+        "input": "images [1, 3, 640, 640] float32",
+        "output": "output0 [1, 300, 6] float32"
+    },
+    "gates": {
+        "note": "Parity gates not applicable — INT8 engine could not be built. Status is FAIL (build failure), not FAIL (parity failure)."
+    },
+    "fp32_fp16_reference": {
+        "fp32_engine_sha256": "from attempt45 (built successfully)",
+        "fp16_engine_sha256": "from attempt45 (built successfully)",
+        "fp32_engine_size_bytes": 13504068,
+        "fp16_engine_size_bytes": 8237284,
+        "note": "FP32 and FP16 engines build and pass parity (from attempt45 evidence). Only INT8 fails to build."
+    },
+    "non_claims": [
+        "Not a certification or signed result.",
+        "Not a claim that TensorRT INT8 cannot work for YOLO26n; only that it fails to build on TensorRT 10.3.0 with this end-to-end ONNX graph.",
+        "The failure is a TensorRT internal assertion in the INT8 calibration graph optimization, triggered by the TopK/GatherElements/Gather NMS pattern.",
+        "A raw-output (non-e2e) ONNX graph or an ONNX with explicit Q/DQ nodes would likely avoid this bug but was not tested.",
+        "TensorRT INT8 calibration was attempted with 200 representative COCO val2017 images (available on Jetson) and the IInt8EntropyCalibrator2.",
+        "OpenVINO INT8 (separate target) was also tested extensively — see docs/evidence/yolo26n-openvino-int8-apple-cpu-FAIL.json.",
+        "Axelera Metis AIPU INT8 (separate target) was also tested — see docs/evidence/yolo26n-axelera-metis-aipu-int8-FAIL.json."
+    ],
+    "bindings": {
+        "onnx_path": "/home/jetson/vision-buildkit/attempt45-yolo26n-tensorrt/results/yolo26n.onnx",
+        "trtexec_path": "/usr/src/tensorrt/bin/trtexec",
+        "trtexec_version": "TensorRT v100300",
+        "calibration_images_available": "5002 COCO val2017 images at /home/jetson/libreyolo-net-sota/data/coco/images/val2017/",
+        "coco_annotations": "/home/jetson/libreyolo-net-sota/data/coco/instances_val2017.json (36781 annotations, 97 in frozen subset)",
+        "reference_predictions": "/home/jetson/vision-buildkit/attempt45-yolo26n-tensorrt/results/validation-fp32/result/reference_predictions.json (57 detections)",
+        "calibrator_script": "/tmp/trt_int8_jetson.py (preserved locally at /tmp/trt_int8_jetson.py)"
+    }
+}

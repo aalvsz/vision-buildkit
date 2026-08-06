@@ -1,0 +1,116 @@
+{
+    "schema_version": 1,
+    "status": "PASS",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "YOLO26n",
+    "task": "object_detection",
+    "host": {
+        "architecture": "aarch64",
+        "device": "NVIDIA Jetson Orin Nano (CUDA)",
+        "os": "Linux 5.15.148-tegra (JetPack)",
+        "runtime": "TensorRT 10.3.0 / CUDA 12.6",
+        "python": "CPython 3.10.12"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 57,
+        "derived_manifest_digest": "e5fc20dd65085c1966be213051d4223a81426415bdb65146ac20c0e18d237144"
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.12,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.31727806187212126,
+            "detections": 57
+        },
+        "tensorrt_fp32": {
+            "map_50_95": 0.31727806187212126,
+            "map_drop": 0.0,
+            "coverage": 1.0,
+            "matched": 57,
+            "lost": 0,
+            "added": 0,
+            "class_mismatches": 0,
+            "max_score_delta": 0.0033115744590759277,
+            "mean_iou": 0.9997321238448567,
+            "min_iou": 0.9989858081436008
+        },
+        "tensorrt_fp16": {
+            "map_50_95": 0.31727806187212126,
+            "map_drop": 0.0,
+            "coverage": 1.0,
+            "matched": 57,
+            "lost": 0,
+            "added": 0,
+            "class_mismatches": 0,
+            "max_score_delta": 0.012841582298278809,
+            "mean_iou": 0.9948638188457513,
+            "min_iou": 0.9867756254886954
+        }
+    },
+    "benchmarks": {
+        "scope": "e2e_same_host_descriptive",
+        "warmup": 10,
+        "iterations": 30,
+        "pytorch_cuda_fp32": {
+            "mean_ms": 42.12242146666667,
+            "p50_ms": 41.202106,
+            "p95_ms": 48.439898
+        },
+        "tensorrt_fp32": {
+            "mean_ms": 193.0720395333333,
+            "p50_ms": 193.01608,
+            "p95_ms": 201.703133
+        },
+        "tensorrt_fp16": {
+            "mean_ms": 175.6535244,
+            "p50_ms": 176.624086,
+            "p95_ms": 180.000286
+        }
+    },
+    "bindings": {
+        "reviewed_execution_envelope_sha256": "6f9f75d2688e77287895b1f6dcd24837c9d48d715364945a420e23a33ce4bd15",
+        "results_sha256": "7c03f2b1faa60eb9595f6f90852e4916f5da29ae62a2f725eb8c804b44c41fea",
+        "results_canonical_digest": "7c03f2b1faa60eb9595f6f90852e4916f5da29ae62a2f725eb8c804b44c41fea",
+        "fp32_validation_report_sha256": "f5443444993c6e36cdbb1f055320457b660da8d4e02390f4809c484feac49c53",
+        "fp16_validation_report_sha256": "cf255800d9c00721c786e6d2e22e139a85ba4e60bd595ffbb1703ac884ac20f8",
+        "fp32_onnx_sha256": "a6df8085775ba892cc9be73bc427add510dd1b15d27f504114b97306fdf62499",
+        "fp16_onnx_sha256": "444e7b3fe7f9b52df6f48976d0514cf310fb6ee87b8cfc09a0526151103f581e",
+        "fp32_engine_sha256": "ab5ad88377d044df44cb5709694abb2e27f832fd9a8610b126a36ca03f230074",
+        "fp16_engine_sha256": "dc35d45163e2036c1d7ac101a3de664eec659f6564cb4237ab9f29b32c5a856a",
+        "source_manifest_sha256": "85712f94ccafe697c27e0f6a9f4140f50d6cd980bc3993a47304f373adc8bce4",
+        "fp32_manifest_sha256": "9728b3f510fdfc7b4a51c5081494cb4a1bfbc2a19a94601c5ac1d46be0e3ebc2",
+        "fp16_manifest_sha256": "d5465f079e2e9db9bd769177380f824ba9c29d3daeae58d851a6d710931d5adc",
+        "vision_record_sha256": "b1843e085586aa6a1991bfdac93965381b634da6a3f1a37642697a1fb3978549",
+        "vision_wheel_sha256": "6f851201d47765dacf3f8426553abf01fdc99523dee0450663230af4f98cb705",
+        "wheel_lock_sha256": "47ec5152d64ce48216accbe021accb4069ef54d6da69580a188ae8c8bcf94d84",
+        "buildkit_commit": "5f4796248375c4b1668e359a40c3667dbcb5c052",
+        "policy_sha256": "9509fbb87aa317b480bc9bdf94f3e57abe7c4bfb682386038e91be822d1563a3",
+        "contract_digest": "bd8d7d2fcad4aeb81d626e376b6fe4eef6d8062341dfdbcfa0fa20d0f60c9b53",
+        "dataset_digest": "c793d8a604d1569b0e4e47aab3141580519e4b251e27ce819195eaaf35c79d7b",
+        "preprocessing_digest": "311fc92aad7b88190339bafd80d734693b8baf78c89418228508b4f384c94e82",
+        "postprocessing_digest": "cd8eaddbff308c9885eb55ce507869590437ce0363d6e7f7f5b2e98e920134a7"
+    },
+    "secure_execution": {
+        "sandbox": "bubblewrap 0.6.1 (--unshare-net --clearenv)",
+        "python_isolation": "-I -B (isolated mode, no user site, no bytecode)",
+        "overlay_origin_enforced": "24 modules under sealed venv",
+        "user_site_disabled": true,
+        "note": "Self-reviewed; not an independent reviewer pass."
+    },
+    "non_claims": [
+        "Not a full-COCO accuracy result.",
+        "Not a speedup claim (benchmarks are descriptive, same-host only).",
+        "Not signed, publishable runtime-policy evidence, or certification.",
+        "Does not verify TensorRT INT8, RF-DETR, or RT-DETR on a real model.",
+        "Evidence is from a single Jetson Orin Nano unit; not a cross-hardware claim."
+    ]
+}

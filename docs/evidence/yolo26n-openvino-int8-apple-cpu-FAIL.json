@@ -1,0 +1,181 @@
+{
+    "schema_version": 1,
+    "status": "FAIL",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "YOLO26n",
+    "task": "object_detection",
+    "host": {
+        "architecture": "arm64",
+        "device": "Apple Silicon CPU",
+        "os": "macOS 26.3.1",
+        "runtime": "OpenVINO 2026.2.1 CPU (NNCF 3.2.0 INT8 post-training quantization)"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97,
+        "calibration_images": 128,
+        "calibration_source": "COCO128 train2017 (first 128 images, no overlap with eval subset)",
+        "calibration_method": "preprocessed .npy arrays via vision contract preprocessing (DetectionProcessor)"
+    },
+    "contract": {
+        "vision_contract_digest": "bd8d7d2fcad4aeb81d626e376b6fe4eef6d8062341dfdbcfa0fa20d0f60c9b53",
+        "onnx_sha256": "91482a6698ae60d9f4f128239119f06e8637a85a525963f72eecca127224b618",
+        "calibration_manifest_sha256": "8e8220e76a0f222e3285ce1cf8df66d4e884c8c00634e7313ffc141e46adef42",
+        "calibration_manifest_digest": "7b93c269fc86222e1a72c018a0bed1784a94fc244d0c3b624f2fe193b0f8b63c",
+        "preprocessing_digest": "3820ac8e43ded45c0b025389b7cb4624cb3f25b5f27d9cb6b4e3b90b32b847bb",
+        "calibration_shape": [1, 3, 640, 640],
+        "calibration_dtype": "float32"
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.1,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.442554,
+            "detections": 57,
+            "results_sha256": "48e9ba3fb417a170c41d06ca2e3ee99d1deb9a37e0e565de43a0bb08a4bb047d"
+        },
+        "best_int8_config": {
+            "config": "NNCF preset=MIXED, subset_size=128, fast_bias_correction=True",
+            "map_50_95": 0.440735,
+            "map_drop": 0.001819,
+            "coverage": 0.982456,
+            "matched": 56,
+            "lost": 1,
+            "added": 4,
+            "class_mismatches": 0,
+            "false_positives": 4,
+            "mean_iou": 0.969334,
+            "min_iou": 0.915989,
+            "max_iou": 0.988201,
+            "mean_score_delta": 0.047023,
+            "max_score_delta": 0.244714,
+            "high_confidence_lost": 0,
+            "high_confidence_added": 0,
+            "candidate_detections": 60,
+            "int8_ir_xml_sha256": "be420f78dad8ba479f3389c00ecf9fb2f9e2d5bf7b2bcaa2117128805ccb8d8f",
+            "int8_ir_bin_sha256": "09ea275f5fba17b90478727091f09f8dbb129aba74f79af030ff1235632eb3ca",
+            "candidate_results_sha256": "9e55d413d67178aa9b229d99e2b67a2285dd1bdbed883b725fc3d7368d5bad7c",
+            "fake_quantize_node_count": 125
+        }
+    },
+    "gate_results": {
+        "map_drop_pass": true,
+        "coverage_pass": true,
+        "class_mismatch_pass": true,
+        "high_confidence_pass": true,
+        "score_delta_pass": false,
+        "overall": "FAIL"
+    },
+    "configuration_sweep": {
+        "summary": "Six NNCF configurations were tested. The MIXED preset with 128 calibration images achieved near-parity mAP (0.440735 vs 0.442554 reference) but still fails the score_delta gate (0.244714 > 0.1). SmoothQuant alpha tuning (0.3, 0.5, 0.7) produced identical outputs to plain MIXED, indicating the quantization is already at its accuracy ceiling for this graph. overflow_fix=enable made results worse (mAP 0.415147). The original PERFORMANCE preset with 10 calibration images (prior FAIL evidence) collapsed mAP to 0.009996; expanding to 128 images improved PERFORMANCE to mAP 0.079 but still far below parity.",
+        "configurations": {
+            "performance_10cal_prior": {
+                "note": "Prior FAIL evidence: PERFORMANCE preset, 10 calibration images",
+                "map_50_95": 0.009996,
+                "map_drop": 0.307282,
+                "max_score_delta": 0.516267
+            },
+            "performance_128cal": {
+                "preset": "PERFORMANCE",
+                "subset_size": 128,
+                "map_50_95": 0.079208,
+                "map_drop": 0.363346,
+                "coverage": 0.105263,
+                "max_score_delta": 0.536488,
+                "fake_quantize_count": 125,
+                "verdict": "FAIL - 35 more calibration images did not fix score collapse"
+            },
+            "mixed_128cal": {
+                "preset": "MIXED",
+                "subset_size": 128,
+                "map_50_95": 0.440735,
+                "map_drop": 0.001819,
+                "coverage": 0.982456,
+                "max_score_delta": 0.244714,
+                "high_confidence_lost": 0,
+                "high_confidence_added": 0,
+                "fake_quantize_count": 125,
+                "verdict": "FAIL (score_delta gate) - mAP and high-confidence parity achieved but max score delta on 1 detection exceeds 0.1"
+            },
+            "mixed_ignored_scope": {
+                "preset": "MIXED",
+                "ignored_scope": "Sigmoid, Softmax, TopK",
+                "subset_size": 128,
+                "map_50_95": 0.440735,
+                "map_drop": 0.001819,
+                "coverage": 0.982456,
+                "max_score_delta": 0.244714,
+                "fake_quantize_count": 127,
+                "verdict": "FAIL (score_delta gate) - identical mAP to mixed; ignoring softmax/sigmoid/topK quantization does not change the one problematic detection"
+            },
+            "mixed_smoothquant_0.3": {
+                "preset": "MIXED",
+                "advanced_parameters.smooth_quant_alpha": 0.3,
+                "map_50_95": 0.440735,
+                "map_drop": 0.001819,
+                "max_score_delta": 0.244714,
+                "verdict": "FAIL - identical to plain MIXED (SmoothQuant has no effect on this graph)"
+            },
+            "mixed_smoothquant_0.5": {
+                "preset": "MIXED",
+                "advanced_parameters.smooth_quant_alpha": 0.5,
+                "map_50_95": 0.440735,
+                "map_drop": 0.001819,
+                "max_score_delta": 0.244714,
+                "verdict": "FAIL - identical to plain MIXED"
+            },
+            "mixed_smoothquant_0.7": {
+                "preset": "MIXED",
+                "advanced_parameters.smooth_quant_alpha": 0.7,
+                "map_50_95": 0.440735,
+                "map_drop": 0.001819,
+                "max_score_delta": 0.244714,
+                "verdict": "FAIL - identical to plain MIXED"
+            },
+            "mixed_overflow_fix_enable": {
+                "preset": "MIXED",
+                "advanced_parameters.overflow_fix": "enable",
+                "map_50_95": 0.415147,
+                "map_drop": 0.027406,
+                "coverage": 0.912281,
+                "max_score_delta": 0.392837,
+                "fake_quantize_count": 125,
+                "verdict": "FAIL (worse) - overflow_fix degrades accuracy"
+            }
+        }
+    },
+    "failure_analysis": {
+        "root_cause": "OpenVINO NNCF INT8 post-training quantization compresses YOLO26n confidence scores. With the MIXED preset and 128 calibration images, mAP recovers to near-parity (drop 0.001819) and all high-confidence detections (score > 0.5) are preserved. However, INT8 quantization compresses one detection's score from 0.6222 to 0.3774 (delta 0.2447), crossing the 0.5 high-confidence boundary downward. This single score-delta exceeds the 0.1 gate.",
+        "what_was_recovered": "Switching from PERFORMANCE to MIXED preset (which keeps some sensitive layers in FP32) and expanding calibration from 10 to 128 images recovered mAP from 0.009996 to 0.440735 — a 44x improvement that demonstrates the quantization scheme, not the fundamental approach, was the bottleneck in the prior FAIL.",
+        "what_still_fails": "max_score_delta = 0.244714 (gate 0.1) on one detection whose reference score 0.6222 dropped to 0.3774. This is a genuine INT8 score-compression artifact that no tested configuration (SmoothQuant, ignored_scope, overflow_fix) resolves.",
+        "score_compression_detail": "8 of 56 matched detections have score deltas > 0.1. The largest (0.2447) is a person detection (image 480985, category 1) whose score drops from 0.6222 to 0.3774. Mean score delta is 0.047023 (below gate), indicating most detections are well-preserved.",
+        "localization_preserved": "Mean IoU 0.969334, min IoU 0.915989, max IoU 0.988201 — all matched detections localize correctly. 0 class mismatches. 0 high-confidence false positives. The 4 false positives all have scores 0.27-0.30 (below high-confidence threshold).",
+        "graph_topology_note": "The YOLO26n end-to-end ONNX bakes NMS into the graph (Sigmoid, Softmax, TopK ops). Quantizing the confidence path through NMS is inherently sensitive. A raw-output graph (NMS external) would likely quantize more gracefully but is out of scope for this contract."
+    },
+    "non_claims": [
+        "Not a certification or signed result.",
+        "Not a claim that OpenVINO INT8 cannot work for YOLO26n; only that it failed under all tested NNCF configurations (PERFORMANCE, MIXED, MIXED+ignored_scope, MIXED+SmoothQuant, MIXED+overflow_fix) with 128 calibration images.",
+        "The MIXED preset achieves mAP parity (drop 0.001819 < 0.002 gate) but fails the per-detection score_delta gate (0.244714 > 0.1).",
+        "A raw-output (non-e2e) ONNX graph may quantize better but was not tested.",
+        "NNCF quantize_with_accuracy_control (iterative quantizer removal) was not tested because it requires a validation_fn callback for detection mAP, which is computationally expensive and out of scope.",
+        "More representative calibration data (full COCO val, 5000+ images) was not available locally in this environment.",
+        "TensorRT INT8 on Jetson remains a separate, untested target."
+    ],
+    "bindings": {
+        "reviewed_execution_envelope_sha256": "Not applicable — this evidence was generated via a development harness (not the sealed bwrap envelope). The development harness source is preserved at /tmp/openvino_int8_retry.py.",
+        "calibration_manifest_path": "/tmp/openvino-int8-retry/calibration-manifest-128.json",
+        "int8_ir_xml_path": "/tmp/openvino-int8-retry/yolo26n-int8-mixed.xml",
+        "int8_ir_bin_path": "/tmp/openvino-int8-retry/yolo26n-int8-mixed.bin",
+        "reference_results_path": "/tmp/rtdetr-prove/yolo26n_ref.json",
+        "candidate_results_path": "/tmp/openvino-int8-retry/yolo26n-int8-mixed-cand.json",
+        "configuration_sweep_summary": "/tmp/openvino-int8-retry/openvino-int8-retry-summary.json"
+    }
+}

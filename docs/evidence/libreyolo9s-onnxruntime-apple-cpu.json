@@ -1,0 +1,58 @@
+{
+    "schema_version": 1,
+    "status": "PASS",
+    "evidence_kind": "observed_unsigned_development",
+    "publishable": false,
+    "certified": false,
+    "model": "LibreYOLO9s",
+    "task": "object_detection",
+    "host": {
+        "architecture": "arm64",
+        "device": "Apple Silicon CPU",
+        "os": "macOS 26.3.1",
+        "runtime": "ONNX Runtime CPUExecutionProvider"
+    },
+    "dataset": {
+        "name": "frozen COCO val2017 first-10 subset",
+        "images": 10,
+        "annotations": 97
+    },
+    "gates": {
+        "maximum_map_drop": 0.002,
+        "minimum_detection_coverage": 0.98,
+        "maximum_score_delta": 0.1,
+        "maximum_class_mismatches": 0,
+        "high_confidence_threshold": 0.5
+    },
+    "metrics": {
+        "pytorch_reference": {
+            "map_50_95": 0.348215,
+            "detections": 76,
+            "note": "threshold 0.25; original mAP at threshold 0.0 (3000 detections) was 0.456691"
+        },
+        "onnxruntime_fp32": {
+            "map_50_95": 0.348215,
+            "map_drop": 0.0,
+            "coverage": 1.0,
+            "matched": 76,
+            "lost": 0,
+            "added": 0,
+            "class_mismatches": 0,
+            "max_score_delta": 0.000004,
+            "mean_iou": 0.999999,
+            "min_iou": 0.999997
+        }
+    },
+    "bindings": {
+        "onnx_sha256": "c948aa3b5d7a5bdedfe0d38bca5319ba4525214f047a513b70dcb64e10bbbb54",
+        "reference_predictions_sha256": "75e7fc5a761e0a8ab92add44d888b8f51cdbe022b13daea848b606c9c4f6895b",
+        "candidate_predictions_sha256": "c1579b29ca97c7ef9b2e46020191c4cdd8eab502571e4384fccac55046836f62"
+    },
+    "non_claims": [
+        "Not a full-COCO accuracy result.",
+        "Not a speedup claim.",
+        "Not signed, publishable runtime-policy evidence, or certification.",
+        "Does not verify LibreYOLO on TensorRT, OpenVINO, or other targets.",
+        "Uses LibreYOLO's official ONNX export via the libreyolo package vision-buildkit adapter; no custom ONNX graph modifications."
+    ]
+}
