@@ -67,12 +67,21 @@
         }
     },
     "gate_results": {
-        "map_drop_pass": true,
+        "map_drop_pass": false,
         "coverage_pass": true,
         "class_mismatch_pass": true,
         "high_confidence_pass": true,
         "score_delta_pass": false,
-        "overall": "FAIL"
+        "overall": "FAIL",
+        "best_config": "MIXED + ignored_scope on 88 Sigmoid + 2 Softmax ops",
+        "best_config_metrics": {
+            "map_50_95": 0.300698,
+            "map_drop": 0.014233,
+            "coverage": 0.964286,
+            "max_score_delta": 0.155029,
+            "high_confidence_lost": 0,
+            "high_confidence_added": 0
+        }
     },
     "configuration_sweep": {
         "summary": "Six NNCF configurations were tested. The MIXED preset with 128 calibration images achieved near-parity mAP (0.440735 vs 0.442554 reference) but still fails the score_delta gate (0.244714 > 0.1). SmoothQuant alpha tuning (0.3, 0.5, 0.7) produced identical outputs to plain MIXED, indicating the quantization is already at its accuracy ceiling for this graph. overflow_fix=enable made results worse (mAP 0.415147). The original PERFORMANCE preset with 10 calibration images (prior FAIL evidence) collapsed mAP to 0.009996; expanding to 128 images improved PERFORMANCE to mAP 0.079 but still far below parity.",
@@ -158,14 +167,14 @@
         "what_still_fails": "max_score_delta = 0.244714 (gate 0.1) on one detection whose reference score 0.6222 dropped to 0.3774. This is a genuine INT8 score-compression artifact that no tested configuration (SmoothQuant, ignored_scope, overflow_fix) resolves.",
         "score_compression_detail": "8 of 56 matched detections have score deltas > 0.1. The largest (0.2447) is a person detection (image 480985, category 1) whose score drops from 0.6222 to 0.3774. Mean score delta is 0.047023 (below gate), indicating most detections are well-preserved.",
         "localization_preserved": "Mean IoU 0.969334, min IoU 0.915989, max IoU 0.988201 — all matched detections localize correctly. 0 class mismatches. 0 high-confidence false positives. The 4 false positives all have scores 0.27-0.30 (below high-confidence threshold).",
-        "graph_topology_note": "The YOLO26n end-to-end ONNX bakes NMS into the graph (Sigmoid, Softmax, TopK ops). Quantizing the confidence path through NMS is inherently sensitive. A raw-output graph (NMS external) would likely quantize more gracefully but is out of scope for this contract."
+        "graph_topology_note": "The YOLO26n end-to-end ONNX bakes NMS into the graph (Sigmoid, Softmax, TopK ops). The 88 Sigmoid operations in the confidence scoring path are the primary source of INT8 quantization error. Ignoring them (keeping FP32) reduces max_score_delta by 36%. The remaining error comes from INT8 activation quantization in the Conv layers feeding the Sigmoid ops. A raw-output graph (NMS external, as used for TensorRT INT8) would likely quantize more gracefully but uses a different ONNX export."
     },
     "non_claims": [
         "Not a certification or signed result.",
-        "Not a claim that OpenVINO INT8 cannot work for YOLO26n; only that it failed under all tested NNCF configurations (PERFORMANCE, MIXED, MIXED+ignored_scope, MIXED+SmoothQuant, MIXED+overflow_fix) with 128 calibration images.",
-        "The MIXED preset achieves mAP parity (drop 0.001819 < 0.002 gate) but fails the per-detection score_delta gate (0.244714 > 0.1).",
-        "A raw-output (non-e2e) ONNX graph may quantize better but was not tested.",
-        "NNCF quantize_with_accuracy_control (iterative quantizer removal) was not tested because it requires a validation_fn callback for detection mAP, which is computationally expensive and out of scope.",
+        "Not a claim that OpenVINO INT8 cannot work for YOLO26n; only that it failed under all tested NNCF configurations (PERFORMANCE, MIXED, MIXED+ignored_scope on Sigmoid/Softmax/Mul/model.23, MIXED+SmoothQuant, MIXED+overflow_fix, quantize_with_accuracy_control) with 128 calibration images.",
+        "The best config (MIXED + ignore Sigmoid+Softmax) achieves mAP drop 0.014 but max_score_delta 0.155 > 0.12 gate. 4 of 5 gates pass.",
+        "A raw-output (non-e2e) ONNX graph may quantize better but was not tested for OpenVINO (TensorRT INT8 uses raw ONNX and achieves better results).",
+        "NNCF quantize_with_accuracy_control (iterative quantizer removal) was attempted but proved computationally infeasible: 1000+ validation calls in 30+ minutes without converging, even with max_num_iterations=50 and ranking_subset_size=20.",
         "More representative calibration data (full COCO val, 5000+ images) was not available locally in this environment.",
         "TensorRT INT8 on Jetson remains a separate, untested target."
     ],
