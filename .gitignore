@@ -12,4 +12,5 @@ build/
 /rtdetr-l.onnx
 /rtdetr-l.pt
 /yolo26n.onnx
+/yolo26n-raw.onnx
 /yolo26n.pt
