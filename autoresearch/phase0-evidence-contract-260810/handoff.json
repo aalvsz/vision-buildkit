@@ -1,0 +1,59 @@
+{
+  "schema": "phase0-handoff",
+  "phase": "phase0-evidence-contract-260810",
+  "status": "ROOT_ACCEPTED",
+  "scope": "Implement strict canonical schema (schema_version=2) for development experiment evidence reports. Prevent combining metrics, configuration identity, and gate booleans from different candidates. This first Phase 0 slice provides the validator and CLI boundary; experiment-pipeline integration remains pending.",
+  "changed": [
+    "vision/experiment_evidence.py (new) — strict frozen Pydantic models: ComparisonBinding, GatePolicy, Configuration, DetectionMetrics, GateResult, CandidateResult, ExperimentReport. load_experiment_report(path) rejects direct symlinks, symlinked parents, and non-files.",
+    "vision/cli.py (minimal edit) — added validate-experiment-evidence Typer command with lazy import.",
+    "tests/test_experiment_evidence.py (new) — positive and adversarial acceptance tests.",
+    "docs/evidence/README.md (new) — schema/migration status.",
+    "autoresearch/phase0-evidence-contract-260810/handoff.json (this file)"
+  ],
+  "evidence": {
+    "design": [
+      "Frozen Pydantic models with extra='forbid' and allow_inf_nan=False.",
+      "Lowercase SHA-256 Hex type for all digest fields.",
+      "Shared ComparisonBinding with single-value preprocessing, postprocessing, contracts, dataset, hardware, and harness digests.",
+      "Configuration.configuration_id derived from canonical JSON of parameters + binding (excluding label); supplied IDs must match derived.",
+      "DetectionMetrics preserves signed map_drop = reference_map - candidate_map and rejects inconsistent supplied values.",
+      "DetectionMetrics verifies coverage and high-confidence/class counts against matched, lost, and added counts.",
+      "GatePolicy defines thresholds for mAP drop, coverage, score delta, class mismatches, high-confidence losses, and high-confidence additions without hard-coded project values.",
+      "GateResult with kind + passed; ExperimentReport recomputes every gate from candidate metrics + policy and rejects forged/mismatched booleans.",
+      "Report status PASS/FAIL derived from selected candidate only; PARTIAL_PASS rejected.",
+      "policy_digest must match policy.canonical digest; binding.policy_digest must match report policy_digest.",
+      "report_digest computed as SHA-256 of canonical report JSON (excluding the property itself)."
+    ],
+    "tests": [
+      "Configuration ID changes when parameters or every binding digest changes, but not when only label changes.",
+      "Forged configuration_id rejected.",
+      "Selected ID must exist and candidate IDs must be unique.",
+      "Forged gate booleans rejected, including high-confidence additions.",
+      "Inconsistent map_drop, metric counts, policy digest, report status, nonfinite metrics or parameters, postprocess binding, extra fields, direct or parent symlinks, and schema_version=1 all rejected.",
+      "Valid report round-trips through JSON and the CLI command."
+    ]
+  },
+  "risks_open_items": [
+    "Existing schema_version=1 evidence files remain unmigrated; they are legacy development records only and are not accepted by the new canonical validator.",
+    "No existing evidence has been migrated or repaired; rerun or artifact-backed migration is required for canonical evidence.",
+    "The canonical schema does not encode benchmark/latency metrics; it focuses on parity gates and configuration identity.",
+    "Acceptance thresholds are not changed; GatePolicy carries user-supplied thresholds only.",
+    "Full migration tooling (schema_version=1 → 2) is out of scope for this slice."
+  ],
+  "next": [
+    "Plan artifact-backed migration or rerun for legacy evidence into schema_version=2 format.",
+    "Integrate canonical report generation into experiment pipelines for future runs."
+  ],
+  "glm_profile": "GLM 5.2 bounded writer (single-worker, phase0-evidence-contract-260810)",
+  "worker_review": "GLM produced the initial schema and CLI slice. Root rejected its first acceptance run (26 passed, 1 failed; Ruff issues), requested one bounded revision, stopped the worker when its patch retry would have violated the approved editing method, then completed and independently verified the corrections.",
+  "test_commands": [
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/python -m pytest -q tests/test_experiment_evidence.py",
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/python -m pytest -q tests/test_core.py tests/test_optimization_regression.py tests/test_optimization_search_regression.py tests/test_capsule_publication.py",
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/python -m pytest -q",
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/ruff check vision/experiment_evidence.py vision/cli.py tests/test_experiment_evidence.py",
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/ruff check .",
+    "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/ruff format --check vision/experiment_evidence.py vision/cli.py tests/test_experiment_evidence.py"
+  ],
+  "test_results": "ROOT ACCEPTED — focused evidence tests: 50 passed; targeted core/optimization/capsule regressions: 99 passed; full suite: 598 passed, 3 skipped; Ruff check: clean; Ruff format check: all 66 checked files conform; all 9 legacy evidence JSON files parse cleanly and remain unmigrated.",
+  "existing_evidence_unmigrated": true
+}

@@ -414,6 +414,26 @@ def validate_dataset_command(
         raise typer.Exit(1)
 
 
+@app.command("validate-experiment-evidence")
+def validate_experiment_evidence(report: str):
+    """Strictly validate a canonical experiment evidence report."""
+    from .experiment_evidence import load_experiment_report
+
+    try:
+        value = load_experiment_report(report)
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    emit(
+        {
+            "schema_version": value.schema_version,
+            "selected_configuration_id": value.selected_configuration_id,
+            "status": value.status,
+            "policy_digest": value.policy_digest,
+            "report_digest": value.report_digest,
+        }
+    )
+
+
 @app.command()
 def inspect(source: str):
     p = Path(source)
