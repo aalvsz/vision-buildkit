@@ -1,5 +1,7 @@
 # Vision BuildKit
 
+![Vision BuildKit — build, validate, and package the evidence](assets/social-preview.jpg)
+
 [![CI](https://github.com/aalvsz/vision-buildkit/actions/workflows/ci.yml/badge.svg)](https://github.com/aalvsz/vision-buildkit/actions/workflows/ci.yml)
 [![License: research only](https://img.shields.io/badge/license-research--only-orange.svg)](LICENSE)
 
