@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .experiment_evidence import ExperimentReport
 from .manifest import VisionManifest, manifest_from_contract, validate_contract_equivalence
 from .optimization import SearchReport, _accepted, load_search_report, verify_resolved_material
 
@@ -452,6 +453,8 @@ class CapsuleIndex(Strict):
     validation_snapshot_digest: str | None = None
     benchmark_snapshot_digest: str | None = None
     build_snapshot_digest: str | None = None
+    experiment_report_digest: str | None = None
+    validation_source_digest: str | None = None
     search_digest: str | None = None
     validation_digest: str | None = None
     dataset_digest: str | None = None
@@ -484,6 +487,8 @@ class CapsuleIndex(Strict):
                 self.validation_snapshot_digest,
                 self.benchmark_snapshot_digest,
                 self.build_snapshot_digest,
+                self.experiment_report_digest,
+                self.validation_source_digest,
                 self.search_digest,
                 self.validation_digest,
                 self.dataset_digest,
@@ -1083,6 +1088,17 @@ def publish_capsule(root: str | Path, report: SearchReport | str | Path) -> Path
     if not accepted or not selected.stages or selected.stages[-1].stage.value != "accepted":
         raise ValueError("release selected candidate is not accepted: " + reason)
     selected.validation.verify(report.request, selected.plan)
+    validation_root = Path(selected.validation.root).resolve(strict=True)
+    validation_result = validation_root / "result" if (validation_root / "result").is_dir() else validation_root
+    experiment_path = _trusted(validation_result / "experiment_report.json")
+    experiment_marker = _trusted(validation_result / "EXPERIMENT_COMMITTED")
+    experiment_digest = checksum(experiment_path)
+    if experiment_marker.read_text() != experiment_digest:
+        raise ValueError("canonical experiment commit marker mismatch")
+    experiment = ExperimentReport.model_validate_json(experiment_path.read_text())
+    experiment.verify_validation_binding(selected.validation.report)
+    if experiment.status != "PASS":
+        raise ValueError("release requires PASS canonical experiment evidence")
     release, validation, benchmark, build_snapshot = _snapshots(report, selected)
     manifest = VisionManifest.from_yaml(selected.validation.report.candidate.target.manifest_path)
 
@@ -1120,6 +1136,7 @@ def publish_capsule(root: str | Path, report: SearchReport | str | Path) -> Path
         _write_json(stage / "evidence/validation_snapshot.json", validation.model_dump(mode="json"))
         _write_json(stage / "evidence/benchmark_snapshot.json", benchmark.model_dump(mode="json"))
         _write_json(stage / "evidence/build_snapshot.json", build_snapshot.model_dump(mode="json"))
+        _copy(experiment_path, stage, "evidence/experiment_report.json")
         artifact = CapsuleArtifact(
             logical_path=artifact_path,
             sha256=selected.resolved.artifact_digest,
@@ -1151,6 +1168,8 @@ def publish_capsule(root: str | Path, report: SearchReport | str | Path) -> Path
             validation_snapshot_digest=validation.digest,
             benchmark_snapshot_digest=benchmark.digest,
             build_snapshot_digest=build_snapshot.digest,
+            experiment_report_digest=experiment_digest,
+            validation_source_digest=selected.validation.report.digest,
             search_digest=release.search_digest,
             validation_digest=validation.report_digest,
             dataset_digest=release.dataset_digest,
@@ -1181,6 +1200,7 @@ def _layout(root: Path, mode: str) -> None:
         "evidence/validation_snapshot.json",
         "evidence/benchmark_snapshot.json",
         "evidence/build_snapshot.json",
+        "evidence/experiment_report.json",
     }
     certified = {"vision-contract.json", "certification-report.json"}
     expected_files = (
@@ -1377,6 +1397,8 @@ def verify_capsule(
     validation = ValidationSnapshot.model_validate_json((root / "evidence/validation_snapshot.json").read_text())
     benchmark = BenchmarkSnapshot.model_validate_json((root / "evidence/benchmark_snapshot.json").read_text())
     build = BuildSnapshot.model_validate_json((root / "evidence/build_snapshot.json").read_text())
+    experiment_path = root / "evidence/experiment_report.json"
+    experiment = ExperimentReport.model_validate_json(experiment_path.read_text())
     indexed_snapshots = (
         index.release_snapshot_digest,
         index.validation_snapshot_digest,
@@ -1386,6 +1408,8 @@ def verify_capsule(
     actual_snapshots = (release.digest, validation.digest, benchmark.digest, build.digest)
     if indexed_snapshots != actual_snapshots:
         raise ValueError("release snapshot digest binding mismatch")
+    if checksum(experiment_path) != index.experiment_report_digest:
+        raise ValueError("release experiment report digest binding mismatch")
     indexed_provenance = (
         index.search_digest,
         index.validation_digest,
@@ -1406,6 +1430,15 @@ def verify_capsule(
     )
     if indexed_provenance != actual_provenance:
         raise ValueError("release provenance binding mismatch")
+    experiment_binding = experiment.candidates[0].configuration.binding
+    if (
+        experiment.status != "PASS"
+        or experiment_binding.validation_report_digest != index.validation_source_digest
+        or experiment_binding.source_artifact_digest != release.source_model_digest
+        or experiment_binding.reference_artifact_digest != release.source_model_digest
+        or experiment_binding.candidate_artifact_digest != build.artifact_digest
+    ):
+        raise ValueError("release experiment evidence cross-binding mismatch")
     if not (
         release.selected_candidate_id == build.candidate_id
         and build.artifact_digest == benchmark.artifact_digest == validation.candidate_source_sha256

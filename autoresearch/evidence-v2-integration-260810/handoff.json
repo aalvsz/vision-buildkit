@@ -1,0 +1,37 @@
+{
+  "schema": "autoresearch-handoff-v1",
+  "phase": "evidence-v2-integration-260810",
+  "status": "ROOT_ACCEPTED",
+  "base_commit": "42d51f73026d02feaa22d235bcf85d01370c50ee",
+  "branch": "codex/evidence-v2-integration",
+  "scope": "Integrate canonical schema-v2 experiment evidence into observed validation and release publication without changing historical runtime claims or acceptance thresholds.",
+  "outcome": "Observed dataset validation atomically commits validation and canonical experiment reports. The canonical report derives all metrics and seven gates from ValidationReport, binds runtime, hardware, harness, graph, calibration, dataset, policy, contracts, and artifacts, and is required by optimization verification. Release capsules persist the report and bind its exact bytes plus source-validation digest into the content-addressed capsule index.",
+  "changed": [
+    "vision/experiment_evidence.py — added validation-source identity, complete image-inventory metrics/gate, and deterministic conversion from observed ValidationReport.",
+    "vision/validation/__init__.py — added hardware/harness/build/calibration bindings, atomic canonical report publication, verification, and rollback semantics.",
+    "vision/capsule.py — release publication now requires PASS canonical evidence, packages it, indexes it, and verifies artifact/source-validation cross-bindings.",
+    "tests — added canonical emission, tamper, rollback, INT8 calibration, release persistence, coordinated reindex, and full-evidence forgery coverage.",
+    "README.md and docs/evidence/README.md — documented the seven gates, observed INT8 requirement, release binding, and rebuild requirement for older releases."
+  ],
+  "acceptance": {
+    "focused": "201 passed",
+    "full": "606 passed, 3 skipped, 12 warnings",
+    "ruff": "PASS",
+    "format": "PASS (66 files)",
+    "package": "vision_buildkit-0.2.2 sdist and wheel built successfully",
+    "diff_check": "PASS"
+  },
+  "limitations": [
+    "Evidence remains observed_unsigned_development; content addressing provides integrity but not authenticity without an external capsule ID pin or future signature service.",
+    "The host digest is a stable platform fingerprint, not a complete accelerator attestation; detailed backend/device identity remains in runtime records.",
+    "Legacy schema-v1 evidence is not migrated. It must be rerun or artifact-backed migrated.",
+    "Release capsules created before canonical experiment binding must be rebuilt; the current verifier intentionally rejects them.",
+    "This tranche improves evidence correctness and reproducibility; it does not claim that Axelera or PTQ INT8 quality gates now pass."
+  ],
+  "recommended_next": [
+    "Add hardware-specific accelerator identity collectors for Jetson, OpenVINO hosts, MPS, and Axelera and bind them into runtime fingerprints.",
+    "Build an artifact-backed legacy evidence migration/rerun command that never converts hand-authored claims without source artifacts.",
+    "Run full-dataset hardware validations and generate fresh schema-v2 release capsules for each supported backend.",
+    "Treat unresolved INT8 parity as a QAT/model-design track, not another unbounded PTQ sweep."
+  ]
+}

@@ -243,6 +243,15 @@ uv run vision validate-dataset \
 
 The CLI accepts mappings as inline JSON, not filenames. The example's map is the COCO-80 model-class-to-COCO-category mapping and is valid only when the dataset manifest declares exactly those categories. For another dataset or label order, pass a one-to-one inline JSON mapping that covers exactly its declared categories.
 
+Every observed validation now atomically publishes both
+`result/validation_report.json` and the derived canonical
+`result/experiment_report.json`, with separate commit markers. The canonical
+report recomputes seven gates and binds the dataset, artifact and graph
+digests, actual runtime identities, host, exact validation harness, and source
+validation report. Observed INT8 validation additionally requires the
+candidate's adjacent content-bound build report and calibration digest; a bare
+precision label is rejected.
+
 ## Vision Capsule
 
 A capsule is the portable result of a build, not the product by itself. A **certified** capsule has this exact top-level layout; the checksum-indexed material filenames are derived from their SHA-256 digests:
@@ -266,7 +275,7 @@ model.vcap/
     └── <content-bound evidence files>
 ```
 
-`manifest.yaml` points to the packaged runnable artifact; `vision-contract.json` is the semantic source of truth. Certified evidence includes the declared cases, inputs, predictions, source predictions, dataset and policy records, accuracy report, runtime record, and environment record. Development and release capsules have different exact layouts; for example, release capsules contain snapshot records under `evidence/`, while only certified capsules contain `vision-contract.json` and `certification-report.json`.
+`manifest.yaml` points to the packaged runnable artifact; `vision-contract.json` is the semantic source of truth. Certified evidence includes the declared cases, inputs, predictions, source predictions, dataset and policy records, accuracy report, runtime record, and environment record. Development and release capsules have different exact layouts. Release capsules contain path-free snapshots plus the canonical `evidence/experiment_report.json`; its exact bytes and source-validation digest are bound into `capsule.json`, and publication rejects missing, failed, or mismatched experiment evidence. Only certified capsules contain `vision-contract.json` and `certification-report.json`. Release capsules produced before this evidence binding must be rebuilt before the current verifier will accept them.
 
 Every certified capsule verification requires an expected capsule ID from a trusted registry or explicit out-of-band pin. The ID is an authenticity anchor; capsule checksums establish only internal integrity and cannot authenticate a coherently rewritten capsule. A future signature service could provide an alternative anchor.
 

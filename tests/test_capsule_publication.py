@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,25 @@ from vision.capsule import (
 )
 from vision.manifest import VisionManifest
 from vision.optimization import BenchmarkReport, SearchReport, optimize_search
+
+
+def _observed_release(tmp_path) -> SearchReport:
+    from test_optimization import evaluate, request
+
+    req, data = request(tmp_path)
+    search = optimize_search(req, lambda item: evaluate(tmp_path, req, data, item, 1.0))
+    values = []
+    for item in search.evaluations:
+        if item.benchmark is None:
+            values.append(item)
+            continue
+        fingerprint = item.benchmark.request.fingerprint.model_copy(update={"mode": "execution"})
+        benchmark = BenchmarkReport.model_validate(
+            item.benchmark.model_dump(exclude={"digest"})
+            | {"request": item.benchmark.request.model_dump() | {"fingerprint": fingerprint.model_dump()}}
+        )
+        values.append(item.model_copy(update={"benchmark": benchmark}))
+    return SearchReport.model_validate(search.model_dump(exclude={"digest"}) | {"evaluations": values})
 
 
 def test_development_capsule_is_integrity_checked_but_not_default_selectable(tmp_path):
@@ -152,26 +172,14 @@ def test_observed_execution_release_publishes_verifies_and_selects(tmp_path):
     # Reuse the public optimization fixture: it creates committed observed
     # validation evidence and resolved material, then make its runtime harness
     # explicitly execution-mode for this capsule boundary.
-    from test_optimization import evaluate, request
-
     from vision.capsule import publish_capsule
 
-    req, data = request(tmp_path)
-    search = optimize_search(req, lambda item: evaluate(tmp_path, req, data, item, 1.0))
-    values = []
-    for item in search.evaluations:
-        if item.benchmark is None:
-            values.append(item)
-            continue
-        fingerprint = item.benchmark.request.fingerprint.model_copy(update={"mode": "execution"})
-        benchmark = BenchmarkReport.model_validate(
-            item.benchmark.model_dump(exclude={"digest"})
-            | {"request": item.benchmark.request.model_dump() | {"fingerprint": fingerprint.model_dump()}}
-        )
-        values.append(item.model_copy(update={"benchmark": benchmark}))
-    release = SearchReport.model_validate(search.model_dump(exclude={"digest"}) | {"evaluations": values})
+    release = _observed_release(tmp_path)
     root = publish_capsule(tmp_path / "release.vcap", release)
     index = verify_capsule(root)
+    assert (root / "evidence/experiment_report.json").is_file()
+    assert index.experiment_report_digest
+    assert index.validation_source_digest
     selected = select_runtime(root, RuntimeRequest(expected_capsule_id=index.capsule_id))
     assert selected.selected is not None and selected.selected.executable
     with pytest.raises(ValueError, match="unexpected capsule id"):
@@ -182,26 +190,11 @@ def test_observed_execution_release_publishes_verifies_and_selects(tmp_path):
     "relative", ("original_weights/capsule.json", "artifacts/parts/capsule.json", "artifacts/extra.bin")
 )
 def test_reindexed_unreferenced_release_material_is_rejected(tmp_path, relative):
-    from test_optimization import evaluate, request
-
     from vision.capsule import CapsuleIndex, _digest, _inventory, _write_json, publish_capsule
 
-    req, data = request(tmp_path)
-    search = optimize_search(req, lambda item: evaluate(tmp_path, req, data, item, 1.0))
-    values = []
-    for item in search.evaluations:
-        if item.benchmark is None:
-            values.append(item)
-            continue
-        fp = item.benchmark.request.fingerprint.model_copy(update={"mode": "execution"})
-        bench = BenchmarkReport.model_validate(
-            item.benchmark.model_dump(exclude={"digest"})
-            | {"request": item.benchmark.request.model_dump() | {"fingerprint": fp.model_dump()}}
-        )
-        values.append(item.model_copy(update={"benchmark": bench}))
     root = publish_capsule(
         tmp_path / "release.vcap",
-        SearchReport.model_validate(search.model_dump(exclude={"digest"}) | {"evaluations": values}),
+        _observed_release(tmp_path),
     )
     pinned = verify_capsule(root).capsule_id
     extra = root / relative
@@ -215,6 +208,55 @@ def test_reindexed_unreferenced_release_material_is_rejected(tmp_path, relative)
     _write_json(root / "capsule.json", forged.model_dump(mode="json"))
     with pytest.raises(ValueError, match="unexpected capsule id|unreferenced|original weight"):
         verify_capsule(root, expected_capsule_id=pinned)
+
+
+def test_reindexed_experiment_candidate_swap_is_rejected(tmp_path):
+    from vision.capsule import CapsuleIndex, _digest, _inventory, _write_json, checksum, publish_capsule
+    from vision.experiment_evidence import CandidateResult, Configuration, ExperimentReport
+
+    root = publish_capsule(tmp_path / "release.vcap", _observed_release(tmp_path))
+    experiment_path = root / "evidence/experiment_report.json"
+    experiment = ExperimentReport.model_validate_json(experiment_path.read_text())
+    candidate = experiment.candidates[0]
+    forged_binding = candidate.configuration.binding.model_copy(update={"candidate_artifact_digest": "f" * 64})
+    forged_configuration = Configuration.with_derived_id(
+        candidate.configuration.label,
+        candidate.configuration.parameters,
+        forged_binding,
+    )
+    forged_candidate = CandidateResult(
+        configuration=forged_configuration,
+        metrics=candidate.metrics,
+        gate_results=candidate.gate_results,
+    )
+    forged_experiment = ExperimentReport.build(
+        experiment.policy,
+        (forged_candidate,),
+        forged_configuration.configuration_id,
+    )
+    _write_json(experiment_path, forged_experiment.model_dump(mode="json"))
+    index = CapsuleIndex.model_validate_json((root / "capsule.json").read_text())
+    files = _inventory(root)
+    body = index.model_dump(exclude={"capsule_id"}) | {
+        "files": files,
+        "experiment_report_digest": checksum(experiment_path),
+    }
+    forged_index = CapsuleIndex(capsule_id=_digest(body), **body)
+    _write_json(root / "checksums.json", files)
+    _write_json(root / "capsule.json", forged_index.model_dump(mode="json"))
+    with pytest.raises(ValueError, match="experiment evidence cross-binding"):
+        verify_capsule(root)
+
+
+def test_release_requires_committed_canonical_experiment(tmp_path):
+    from vision.capsule import publish_capsule
+
+    release = _observed_release(tmp_path)
+    selected = next(item for item in release.evaluations if item.plan.candidate_id == release.selected_candidate_id)
+    validation_result = Path(selected.validation.root) / "result"
+    (validation_result / "experiment_report.json").unlink()
+    with pytest.raises(ValueError, match="canonical experiment evidence"):
+        publish_capsule(tmp_path / "release.vcap", release)
 
 
 @pytest.mark.parametrize("attempt", range(2))

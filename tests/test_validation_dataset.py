@@ -15,6 +15,7 @@ from vision.adapters.rfdetr import RfDetrAdapter
 from vision.adapters.rtdetr import RTDetrAdapter
 from vision.adapters.ultralytics import UltralyticsAdapter
 from vision.cli import app
+from vision.experiment_evidence import ExperimentReport
 from vision.manifest import VisionManifest
 from vision.types import Box, DetectionResult
 from vision.validation import (
@@ -127,7 +128,60 @@ def test_public_loads_twice_full_inventory_and_zero_boxes(monkeypatch, tmp_path)
         and report.reference.evaluated_image_ids == [1, 2]
     )
     assert report.reference.detection_image_ids == [] and (tmp_path / "out" / "COMMITTED").exists()
+    experiment_path = tmp_path / "out" / "result" / "experiment_report.json"
+    experiment = ExperimentReport.model_validate_json(experiment_path.read_text())
+    assert experiment.status == "PASS"
+    assert experiment.verify_validation_binding(report)
+    assert (tmp_path / "out" / "result" / "EXPERIMENT_COMMITTED").is_file()
     assert report.verify(tmp_path / "out", report.policy_digest)
+
+
+def test_public_validation_rejects_forged_canonical_experiment(monkeypatch, tmp_path):
+    data = dataset(tmp_path)
+    left, right = target(tmp_path, "left"), target(tmp_path, "right")
+
+    class Model:
+        def runtime_identity(self):
+            return dict(RUNTIME_IDENTITY)
+
+        def __call__(self, path):
+            return DetectionResult(metadata=dict(RUNTIME_IDENTITY))
+
+    monkeypatch.setattr(vision, "load", lambda *args, **kwargs: Model())
+    report = validate_dataset(left, right, data, ValidationPolicy(max_map_drop=0), tmp_path / "out")
+    experiment_path = tmp_path / "out" / "result" / "experiment_report.json"
+    payload = json.loads(experiment_path.read_text())
+    payload["status"] = "FAIL"
+    experiment_path.write_text(json.dumps(payload))
+    marker = tmp_path / "out" / "result" / "EXPERIMENT_COMMITTED"
+    marker.write_text(hashlib.sha256(experiment_path.read_bytes()).hexdigest())
+
+    with pytest.raises(ValueError):
+        report.verify(tmp_path / "out", report.policy_digest)
+
+
+def test_canonical_experiment_failure_rolls_back_validation_publication(monkeypatch, tmp_path):
+    data = dataset(tmp_path)
+    left, right = target(tmp_path, "left"), target(tmp_path, "right")
+
+    class Model:
+        def runtime_identity(self):
+            return dict(RUNTIME_IDENTITY)
+
+        def __call__(self, path):
+            return DetectionResult(metadata=dict(RUNTIME_IDENTITY))
+
+    monkeypatch.setattr(vision, "load", lambda *args, **kwargs: Model())
+    monkeypatch.setattr(
+        "vision.experiment_evidence.experiment_report_from_validation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("canonical evidence failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="canonical evidence failed"):
+        validate_dataset(left, right, data, ValidationPolicy(max_map_drop=0), tmp_path / "out")
+
+    assert not (tmp_path / "out").exists()
+    assert not (tmp_path / ".out.validation.lock").exists()
 
 
 def test_public_runtime_session_identity_rejects_forged_or_inconsistent_metadata(monkeypatch, tmp_path):
@@ -198,6 +252,68 @@ def test_public_observed_runtime_contract_is_publishable_only_when_policy_matche
     )
     with pytest.raises(ValueError, match="reference runtime does not match policy"):
         validate_dataset(left, right, data, mismatched, tmp_path / "mismatched")
+
+
+def test_public_int8_validation_requires_bound_calibration_build_report(monkeypatch, tmp_path):
+    data = dataset(tmp_path)
+    reference = target(tmp_path, "reference")
+    source = tmp_path / "candidate.onnx"
+    source.write_bytes(b"candidate-int8")
+    manifest_path = tmp_path / "candidate.yaml"
+    manifest = VisionManifest(
+        source=str(source),
+        family="onnx",
+        artifacts=[
+            {
+                "path": str(source),
+                "backend": "onnxruntime",
+                "precision": "int8",
+                "validated": True,
+                "checksum": sha(source),
+                "compatible": {"device": "cpu", "provider": "CPUExecutionProvider"},
+            }
+        ],
+    )
+    manifest.to_yaml(manifest_path)
+    candidate = ModelTarget(
+        source=str(source),
+        source_sha256=sha(source),
+        manifest_path=str(manifest_path),
+        manifest_sha256=sha(manifest_path),
+        manifest_digest=digest(manifest.model_dump(mode="json")),
+        device="cpu",
+        class_mapping={"0": 1},
+    )
+
+    class Model:
+        def __init__(self, runtime):
+            self.runtime = runtime
+
+        def runtime_identity(self):
+            return dict(self.runtime)
+
+        def __call__(self, path):
+            return DetectionResult(metadata=dict(self.runtime))
+
+    candidate_runtime = {
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "device": "cpu",
+        "precision": "int8",
+        "input_shape": [1, 3, 640, 640],
+    }
+    monkeypatch.setattr(
+        vision,
+        "load",
+        lambda source, **kwargs: Model(
+            candidate_runtime if str(source).endswith("candidate.onnx") else RUNTIME_IDENTITY
+        ),
+    )
+
+    with pytest.raises(ValueError, match="bound calibration build report"):
+        validate_dataset(reference, candidate, data, ValidationPolicy(max_map_drop=0), tmp_path / "out")
+
+    assert not (tmp_path / "out").exists()
 
 
 def test_public_validation_rejects_materialized_runtime_sentinel(monkeypatch, tmp_path):

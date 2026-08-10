@@ -50,6 +50,7 @@ class ComparisonBinding(_Strict):
     evaluation_dataset_digest: Hex
     calibration_dataset_digest: Hex
     policy_digest: Hex
+    validation_report_digest: Hex
     reference_runtime_fingerprint_digest: Hex
     candidate_runtime_fingerprint_digest: Hex
     hardware_digest: Hex
@@ -164,6 +165,10 @@ class DetectionMetrics(_Strict):
     matched: int = Field(ge=0)
     lost: int = Field(ge=0)
     added: int = Field(ge=0)
+    expected_images: int = Field(gt=0)
+    reference_evaluated_images: int = Field(ge=0)
+    candidate_evaluated_images: int = Field(ge=0)
+    inventory_complete: bool
     map_drop: float = Field(ge=-1, le=1)
 
     @model_validator(mode="after")
@@ -185,6 +190,17 @@ class DetectionMetrics(_Strict):
             raise ValueError(f"high_confidence_added={self.high_confidence_added} exceeds added={self.added}")
         if self.class_mismatches > self.matched:
             raise ValueError(f"class_mismatches={self.class_mismatches} exceeds matched={self.matched}")
+        expected_inventory = (
+            self.reference_evaluated_images == self.expected_images
+            and self.candidate_evaluated_images == self.expected_images
+        )
+        if self.inventory_complete != expected_inventory:
+            raise ValueError("inventory_complete does not match evaluated image counts")
+        if (
+            self.reference_evaluated_images > self.expected_images
+            or self.candidate_evaluated_images > self.expected_images
+        ):
+            raise ValueError("evaluated image counts exceed the expected inventory")
         return self
 
     @classmethod
@@ -200,6 +216,9 @@ class DetectionMetrics(_Strict):
         matched: int,
         lost: int,
         added: int,
+        expected_images: int = 1,
+        reference_evaluated_images: int = 1,
+        candidate_evaluated_images: int = 1,
     ) -> DetectionMetrics:
         map_drop = reference_map - candidate_map
         return cls(
@@ -213,11 +232,18 @@ class DetectionMetrics(_Strict):
             matched=matched,
             lost=lost,
             added=added,
+            expected_images=expected_images,
+            reference_evaluated_images=reference_evaluated_images,
+            candidate_evaluated_images=candidate_evaluated_images,
+            inventory_complete=(
+                reference_evaluated_images == expected_images and candidate_evaluated_images == expected_images
+            ),
             map_drop=map_drop,
         )
 
 
 GateKind = Literal[
+    "inventory",
     "map_drop",
     "coverage",
     "score_delta",
@@ -228,6 +254,7 @@ GateKind = Literal[
 _EXPECTED_GATE_KINDS: frozenset[str] = frozenset(
     {
         "map_drop",
+        "inventory",
         "coverage",
         "score_delta",
         "class_mismatches",
@@ -246,6 +273,7 @@ class GateResult(_Strict):
 
 def _compute_gate_results(metrics: DetectionMetrics, policy: GatePolicy) -> tuple[GateResult, ...]:
     return (
+        GateResult(kind="inventory", passed=metrics.inventory_complete),
         GateResult(kind="map_drop", passed=metrics.map_drop <= policy.max_map_drop),
         GateResult(kind="coverage", passed=metrics.coverage >= policy.min_coverage),
         GateResult(kind="score_delta", passed=metrics.max_score_delta <= policy.max_score_delta),
@@ -364,6 +392,19 @@ class ExperimentReport(_Strict):
         )
         return hashlib.sha256(canonical.encode()).hexdigest()
 
+    def verify_validation_binding(self, validation_report: Any) -> bool:
+        """Rebuild this report from its committed validation source and compare exactly."""
+
+        binding = self.candidates[0].configuration.binding
+        expected = experiment_report_from_validation(
+            validation_report,
+            candidate_graph_digest=binding.candidate_graph_digest,
+            calibration_dataset_digest=binding.calibration_dataset_digest,
+        )
+        if expected != self:
+            raise ValueError("experiment evidence does not match its validation report")
+        return True
+
     @classmethod
     def build(
         cls,
@@ -400,3 +441,118 @@ def load_experiment_report(path: str | Path) -> ExperimentReport:
     if not p.is_file():
         raise ValueError(f"not a regular file: {path}")
     return ExperimentReport.model_validate_json(p.read_text())
+
+
+NOT_APPLICABLE_DIGEST = hashlib.sha256(b"not-applicable").hexdigest()
+
+
+def experiment_report_from_validation(
+    validation_report: Any,
+    *,
+    candidate_graph_digest: str | None = None,
+    calibration_dataset_digest: str | None = None,
+) -> ExperimentReport:
+    """Derive canonical experiment evidence from a validated observed report.
+
+    No metric, gate, runtime, policy, dataset, or artifact identity is accepted
+    from the caller. Only build-only identities absent from ValidationReport may
+    be supplied explicitly, and they remain content-bound in the result.
+    """
+
+    validation_report.__class__.model_validate(validation_report.model_dump(mode="json"))
+    if validation_report.evidence_kind != "observed":
+        raise ValueError("canonical experiment evidence requires observed validation")
+    if not validation_report.hardware_digest or not validation_report.harness_digest:
+        raise ValueError("validation report lacks hardware or harness identity")
+
+    policy = GatePolicy(
+        max_map_drop=validation_report.policy.max_map_drop,
+        min_coverage=validation_report.policy.min_coverage,
+        max_score_delta=validation_report.policy.score_delta,
+        max_class_mismatches=validation_report.policy.max_class_mismatches,
+        high_confidence_threshold=validation_report.policy.high_confidence,
+        max_high_confidence_lost=0,
+        max_high_confidence_added=0,
+    )
+    reference, candidate = validation_report.reference, validation_report.candidate
+    input_contract_digest = _sha256(
+        _canonical_json(
+            {
+                "reference": reference.input_preprocessing_digest,
+                "candidate": candidate.input_preprocessing_digest,
+                "dataset": validation_report.dataset.preprocessing_digest,
+                "allowed": list(validation_report.dataset.allowed_preprocessing_digests),
+            }
+        )
+    )
+    output_contract_digest = _sha256(
+        _canonical_json(
+            {
+                "reference": reference.output_postprocessing_digest,
+                "candidate": candidate.output_postprocessing_digest,
+                "dataset": validation_report.dataset.postprocessing_digest,
+                "allowed": list(validation_report.dataset.allowed_postprocessing_digests),
+            }
+        )
+    )
+    binding = ComparisonBinding(
+        model_id=candidate.target.manifest().family,
+        source_artifact_digest=reference.target.source_sha256,
+        reference_artifact_digest=reference.target.source_sha256,
+        candidate_artifact_digest=candidate.target.source_sha256,
+        candidate_graph_digest=candidate_graph_digest
+        or validation_report.candidate_graph_digest
+        or candidate.target.source_sha256,
+        input_contract_digest=input_contract_digest,
+        output_contract_digest=output_contract_digest,
+        preprocessing_digest=validation_report.dataset.preprocessing_digest,
+        postprocessing_digest=validation_report.dataset.postprocessing_digest,
+        evaluation_dataset_digest=validation_report.dataset.digest,
+        calibration_dataset_digest=calibration_dataset_digest
+        or validation_report.calibration_digest
+        or NOT_APPLICABLE_DIGEST,
+        policy_digest=policy.digest,
+        validation_report_digest=validation_report.digest,
+        reference_runtime_fingerprint_digest=reference.runtime.digest,
+        candidate_runtime_fingerprint_digest=candidate.runtime.digest,
+        hardware_digest=validation_report.hardware_digest,
+        harness_digest=validation_report.harness_digest,
+    )
+    configuration = Configuration.with_derived_id(
+        label=f"{candidate.runtime.backend}-{candidate.runtime.precision}-{candidate.runtime.device}",
+        parameters={
+            "backend": candidate.runtime.backend,
+            "provider": candidate.runtime.provider,
+            "device": candidate.runtime.device,
+            "precision": candidate.runtime.precision,
+            "input_shape": list(candidate.runtime.input_shape),
+            "validation_policy_digest": validation_report.policy_digest,
+        },
+        binding=binding,
+    )
+    parity = validation_report.parity
+    metrics = DetectionMetrics.build(
+        reference_map=validation_report.map_reference,
+        candidate_map=validation_report.map_candidate,
+        coverage=parity["coverage"],
+        max_score_delta=parity["max_score_delta"],
+        high_confidence_lost=len(parity["high_conf_lost"]),
+        high_confidence_added=len(parity["high_conf_added"]),
+        class_mismatches=len(parity["class_mismatches"]),
+        matched=parity["matched"],
+        lost=len(parity["lost"]),
+        added=len(parity["added"]),
+        expected_images=validation_report.dataset.expected_image_count,
+        reference_evaluated_images=len(reference.evaluated_image_ids),
+        candidate_evaluated_images=len(candidate.evaluated_image_ids),
+    )
+    result = CandidateResult.build(configuration=configuration, metrics=metrics, policy=policy)
+    report = ExperimentReport.build(
+        policy=policy,
+        candidates=(result,),
+        selected_configuration_id=configuration.configuration_id,
+    )
+    expected_status: ReportStatus = "PASS" if validation_report.passed else "FAIL"
+    if report.status != expected_status:
+        raise ValueError("canonical experiment status disagrees with validation report")
+    return report
