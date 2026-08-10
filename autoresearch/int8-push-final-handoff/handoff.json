@@ -1,0 +1,265 @@
+{
+  "schema": 2,
+  "phase": "INT8-push-final-handoff",
+  "predecessor": "phase23-yolo26n-tensorrt-jetson-attempt45-260802",
+  "predecessor_outcome": "GO (TensorRT FP32/FP16 verified on Jetson)",
+  "outcome": "COMPLETED — PTQ ceiling reached for INT8; evidence updated and committed",
+  "state": "WRAPPED",
+  "date": "2025-08-02",
+  "commit": "0849464",
+  "summary": "Extended INT8 post-training quantization (PTQ) sweeps on both TensorRT (Jetson Orin Nano) and OpenVINO (Apple Silicon). Both targets reach their PTQ ceiling — 4/6 TensorRT gates and 4/5 OpenVINO gates pass. The remaining gaps are structural to PTQ (INT8 score compression on low-confidence detections) and cannot be closed with more calibration data, different calibrators, or precision-scope tuning. QAT (quantization-aware training) is the documented path forward.",
+  "quality_status": "PASS (549 tests, ruff clean)",
+  "self_review": true,
+  "review_caveat": "All evidence is self-reviewed by the worker that built it. No independent reviewer pass was performed. Evidence is 'observed_unsigned_development' kind — not certified, not signed, not publishable.",
+  "git_log": [
+    "0849464 evidence: expand INT8 configuration sweeps (TensorRT 20-config, OpenVINO 14-config)",
+    "e8bd90c TensorRT INT8 breakthrough: raw ONNX + MinMax + FP16 OBEY achieves 4/6 parity gates",
+    "e983cee Add raw-output ONNX export approach for TensorRT INT8",
+    "11d7208 Add runtime verification evidence for TensorRT, RF-DETR, RT-DETR, LibreYOLO, and INT8 failure analysis"
+  ],
+  "evidence_files": {
+    "VERIFIED_PASS": [
+      {
+        "file": "docs/evidence/yolo26n-tensorrt-jetson-orin-nano.json",
+        "model": "YOLO26n",
+        "status": "PASS",
+        "runtime": "TensorRT 10.3.0 / CUDA 12.6 on NVIDIA Jetson Orin Nano",
+        "gates": "FP32 + FP16 both PASS (6/6 gates each)",
+        "mAP": "0.317278 (zero drop vs PyTorch reference)",
+        "source": "attempt45 sealed bwrap execution"
+      },
+      {
+        "file": "docs/evidence/yolo26n-openvino-apple-cpu.json",
+        "model": "YOLO26n",
+        "status": "PASS",
+        "runtime": "OpenVINO 2026.2.1 CPU on Apple Silicon"
+      },
+      {
+        "file": "docs/evidence/rtdetr-l-onnxruntime-apple-cpu.json",
+        "model": "RT-DETR-L",
+        "status": "PASS",
+        "runtime": "ONNX Runtime CPU on Apple Silicon",
+        "mAP": "0.464263 (zero drop), 173/173 matched"
+      },
+      {
+        "file": "docs/evidence/rfdetr-base-onnxruntime-apple-cpu.json",
+        "model": "RF-DETR-Base",
+        "status": "PASS",
+        "runtime": "ONNX Runtime CPU on Apple Silicon",
+        "mAP": "0.361338, 67/67 matched"
+      },
+      {
+        "file": "docs/evidence/libreyolo9s-onnxruntime-apple-cpu.json",
+        "model": "LibreYOLO9s",
+        "status": "PASS",
+        "runtime": "ONNX Runtime CPU on Apple Silicon",
+        "mAP": "0.348215, 76/76 matched"
+      }
+    ],
+    "PARTIAL_PASS": [
+      {
+        "file": "docs/evidence/yolo26n-tensorrt-int8-raw-jetson-orin-nano.json",
+        "model": "YOLO26n",
+        "status": "PARTIAL_PASS",
+        "runtime": "TensorRT 10.3.0 INT8 on NVIDIA Jetson Orin Nano",
+        "configs_tested": 20,
+        "gates_pass": "4 of 6",
+        "gates_fail": ["coverage (0.912 < 0.98)", "max_score_delta (0.168 > 0.12)"],
+        "best_config": "U: MinMax + FP16 + OBEY(last30→FLOAT) + 500calib",
+        "best_map": "0.334 (INT8 > FP32 reference 0.317)",
+        "best_max_delta": "0.168",
+        "hc_lost": 0,
+        "hc_added": 1,
+        "key_findings": [
+          "raw ONNX (end2end=False) bypasses TensorRT 10.3.0 checkLinks INT8 bug",
+          "IInt8MinMaxCalibrator >> IInt8EntropyCalibrator (mAP 0.265 vs 0.119)",
+          "FLOAT (FP32) for head layers beats FP16 for score fidelity (delta 0.206→0.168)",
+          "More calibration data beyond 1000 images makes results WORSE",
+          "Coverage 0.912 is structural: same 5 low-conf dets lost across ALL 20 configs"
+        ]
+      }
+    ],
+    "FAIL": [
+      {
+        "file": "docs/evidence/yolo26n-openvino-int8-apple-cpu-FAIL.json",
+        "model": "YOLO26n",
+        "status": "FAIL",
+        "runtime": "OpenVINO 2026.2.1 + NNCF 3.2.0 on Apple Silicon",
+        "configs_tested": 14,
+        "gates_fail": ["max_score_delta (0.155 > 0.12)"],
+        "best_config": "MIXED + ignored_scope on 88 Sigmoid + 2 Softmax ops",
+        "best_map": "0.301 (drop 0.014)",
+        "best_max_delta": "0.155 (down from 0.245 plain MIXED — 36% improvement)",
+        "key_findings": [
+          "Sigmoid ops are primary source of INT8 score quantization error",
+          "Keeping Sigmoid+Softmax in FP32 via ignored_scope reduces max_delta 36%",
+          "SmoothQuant (0.3/0.5/0.7) has zero effect on this graph",
+          "overflow_fix degrades results",
+          "quantize_with_accuracy_control: infeasible (1000+ validation calls, no convergence)"
+        ]
+      },
+      {
+        "file": "docs/evidence/yolo26n-tensorrt-int8-jetson-orin-nano-FAIL.json",
+        "model": "YOLO26n",
+        "status": "FAIL",
+        "runtime": "TensorRT 10.3.0 INT8 on NVIDIA Jetson Orin Nano",
+        "root_cause": "TensorRT 10.3.0 checkLinks INT8 calibration bug with e2e ONNX (TopK/GatherElements/Gather from baked-in NMS). 6 build strategies tried, all fail.",
+        "workaround": "Use raw-output ONNX (end2end=False) → see PARTIAL_PASS evidence above"
+      },
+      {
+        "file": "docs/evidence/yolo26n-axelera-metis-aipu-int8-FAIL.json",
+        "model": "YOLO26n",
+        "status": "FAIL",
+        "runtime": "Axelera Metis AIPU (metis-0:3:0, hw_gen=omega, 4 AI cores, M.2 board, runtime 1.7.0-1)",
+        "mAP": "0.200382 (ref 0.442554)",
+        "coverage": "0.40 (23/57 dets matched)",
+        "root_cause": "INT8-only AIPU compresses confidence scores below threshold; localization preserved (mean IoU 0.96)",
+        "quantization_schemes_tried": ["per_tensor_min_max (only working)", "hybrid_per_tensor_per_channel (compile fail)", "per_tensor_histogram (compile fail)", "SmoothQuant 0.5 (identical scores)"]
+      }
+    ]
+  },
+  "int8_summary_table": {
+    "TensorRT INT8 (raw ONNX, Jetson)": {
+      "status": "PARTIAL_PASS",
+      "gates_pass": "4/6",
+      "mAP": "0.334 (INT8 > FP32)",
+      "max_delta": "0.168",
+      "coverage": "0.912",
+      "gap": "coverage 0.068, max_delta 0.048",
+      "ptq_ceiling": true
+    },
+    "OpenVINO INT8 (Apple CPU)": {
+      "status": "FAIL",
+      "gates_pass": "4/5",
+      "mAP": "0.301 (drop 0.014)",
+      "max_delta": "0.155",
+      "coverage": "0.964",
+      "gap": "max_delta 0.035",
+      "ptq_ceiling": true
+    },
+    "Axelera INT8 (Metis AIPU)": {
+      "status": "FAIL",
+      "gates_pass": "0/5",
+      "mAP": "0.200",
+      "max_delta": "N/A (34 dets lost)",
+      "coverage": "0.404",
+      "gap": "fundamental: AIPU is INT8-only, no FP32 path",
+      "ptq_ceiling": true
+    }
+  },
+  "what_was_attempted_in_this_session": {
+    "TensorRT_INT8": {
+      "rounds": "7 and 8 (4 new configs each)",
+      "configs": [
+        "R: last50→FP16 + 2000calib (worse: 0.268)",
+        "S: last50→FP16 + 4990calib all available (worse: 0.268, max_delta 0.372)",
+        "T: last60→FP16 + 1000calib (0.330, max_delta 0.200)",
+        "U: last30→FLOAT + 500calib [NEW BEST: 0.334, max_delta 0.168]",
+        "V: last50→FLOAT + 1000calib (0.325, max_delta 0.204)",
+        "W: last80→FLOAT + 1000calib (0.306, max_delta 0.173)",
+        "X: last30→FLOAT no FP16 + 1000calib (0.317, max_delta 0.279)"
+      ],
+      "breakthrough": "4th breakthrough: FLOAT (FP32) for head layers instead of FP16 reduces max_delta from 0.206 to 0.168. FP32 preserves exact score precision for the confidence head.",
+      "negative_finding": "More calibration data (2000, 4990) made things WORSE — MinMax calibrator saturates at ~1000 images."
+    },
+    "OpenVINO_INT8": {
+      "iterations": "v2 through v6",
+      "configs_tested": [
+        "MIXED + 128calib (re-verified: max_delta 0.427)",
+        "MIXED + per_channel (NNCF doesn't expose per_channel param)",
+        "quantize_with_accuracy_control (infeasible: 10000+ validation calls in 16h, killed)",
+        "MIXED + quantize_outputs=True (broke graph: 0 detections)",
+        "MIXED + ignore Sigmoid+Softmax [NEW BEST: max_delta 0.155]",
+        "MIXED + ignore Sigmoid+Softmax+Mul (worse: 0.186)",
+        "MIXED + ignore 50Conv+Sigmoid (worse: 0.361)",
+        "MIXED + ignore model.23 head (max_delta 0.271)",
+        "MIXED + ignore model.22+23 neck+head (max_delta 0.224)",
+        "MIXED + ignore Sigmoid+Softmax+Split (failed: Split/Concat can't be ignored)",
+        "MIXED + ignore Sigmoid+Softmax+Concat (failed)",
+        "MIXED + ignore Sigmoid+Softmax+Mul+Split+Concat (failed)",
+        "MIXED + ignore Sigmoid+Softmax+model.23 (max_delta 0.271)",
+        "accuracy_control bounded (max 50 iter, RELATIVE drop 0.05) — still too slow",
+        "ignore Sigmoid+Softmax + overflow_fix (worse: 0.294)",
+        "ignore Sigmoid+Softmax + smooth_quant 0.3/0.5/0.7 (identical: 0.155)"
+      ],
+      "breakthrough": "Ignoring all 88 Sigmoid + 2 Softmax operations reduces max_score_delta by 36% (0.245→0.155). Sigmoid ops are the primary source of INT8 score quantization error."
+    }
+  },
+  "why_both_INT8_targets_are_stuck": {
+    "root_cause": "INT8 PTQ compresses confidence scores on low-confidence detections near the 0.25 threshold. The effect is systematic, not random — the same detections are affected across all configs.",
+    "tensorRT_coverage_gap": "5 low-confidence detections (scores 0.27–0.43) always lost across ALL 20 configs — structural threshold-boundary effect.",
+    "max_delta_gap": "INT8 activation quantization in Conv layers feeding Sigmoid/Softmax shifts scores by 0.06–0.15 across 27 detections. This is fundamental to post-training approximation.",
+    "what_would_fix_it": "QAT (quantization-aware training) — retrain YOLO26n with simulated INT8 quantization in the training loop so the model learns robustness. Requires COCO training pipeline + GPU hours.",
+    "why_we_stopped": "Exhausted ALL practical PTQ options. 20 TensorRT configs, 14 OpenVINO configs, every calibrator/scope/augmentation combination. Effort/return is now worst. QAT is a different kind of work (training, not inference/quantization)."
+  },
+  "next_steps_for_new_agent": {
+    "option_A_QAT": {
+      "description": "Retrain YOLO26n with quantization-aware training on COCO to close the remaining INT8 gates",
+      "effort": "Days (training pipeline setup + GPU hours + hyperparameter tuning)",
+      "payoff": "Could close coverage (0.912→0.98) and max_delta (0.168→0.12 for TensorRT, 0.155→0.12 for OpenVINO)",
+      "prerequisites": "COCO training data, GPU, ultralytics QAT support or custom training loop"
+    },
+    "option_B_latency_benchmark": {
+      "description": "Measure INT8 vs FP32 throughput on Jetson to show practical value of partial INT8",
+      "effort": "30 minutes — engine already built, just need timing harness",
+      "payoff": "Answers 'is partial INT8 worth it?' from a speed perspective"
+    },
+    "option_C_independent_review": {
+      "description": "Independent reviewer pass on all evidence files",
+      "effort": "Hours",
+      "payoff": "Strengthens evidence from 'self-reviewed' to 'independently reviewed'"
+    },
+    "option_D_full_coco_validation": {
+      "description": "Expand validation from 10-image frozen subset to full COCO val2017 (5000 images)",
+      "effort": "Hours (inference on 5000 images for each target)",
+      "payoff": "Statistically significant mAP numbers"
+    },
+    "option_E_ship_as_is": {
+      "description": "Documentation is honest and complete. INT8 is documented as partial-pass with root cause analysis. README certification table is current.",
+      "effort": "Zero",
+      "payoff": "Closure"
+    },
+    "recommended": "Option E (ship as is) or Option B (quick latency benchmark) before stopping"
+  },
+  "environment_notes": {
+    "local_machine": "Apple Silicon macOS 26.3.1, OpenVINO 2026.2.1, NNCF 3.2.0, Python 3.10",
+    "jetson": "NVIDIA Jetson Orin Nano at 100.78.76.125, SSH user jetson, TensorRT 10.3.0, torch 2.10.0 CUDA",
+    "jetson_venv": "~/vision-buildkit/attempt45-yolo26n-tensorrt/venv (system-site-packages, torch/tensorrt from system)",
+    "jetson_model": "/home/jetson/vision-buildkit/attempt45-yolo26n-tensorrt/results/ (ONNX + engines + reference predictions)",
+    "jetson_coco": "/home/jetson/libreyolo-net-sota/data/coco/images/val2017/ (5002 calibration images)",
+    "jetson_coco_annotations": "/home/jetson/libreyolo-net-sota/data/coco/instances_val2017.json",
+    "local_coco128": "/Users/ander.alvarez/datasets/coco128/images/train2017/ (128 calibration images for OpenVINO)",
+    "local_coco_annotations": "autoresearch/vision-buildkit-phase21-rtdetr-l-ort-diagnostic-attempt40-260802/data/instances_val2017.verified.json (the .verified.json, the plain .json is corrupt)",
+    "local_frozen_images": "autoresearch/vision-buildkit-phase19-jetson-tensorrt-attempt42-260802/bundle/source-assets/dataset/images/ (10 validation images)",
+    "raw_onnx_local": "yolo26n-raw.onnx (raw output, end2end=False, output shape (1,84,8400))",
+    "axelera_device": "100.127.83.2, chameleon-translation-metis.service must be stopped before AIPU inference (holds all 4 AI cores), LD_LIBRARY_PATH=/opt/axelera/runtime-1.7.0-1/lib"
+  },
+  "api_gotchas_discovered": {
+    "openvino": "model.ops does not exist; use model.get_ops() to enumerate operations",
+    "openvino_save": "core.save_model() does not exist; use save_model() imported from openvino package",
+    "nncf_dataset": "nncf.quantize() requires nncf.Dataset(arrays) wrapper, not a plain list",
+    "nncf_accuracy_control": "takes validation_fn(compiled_model, data_iter) -> (metric, None), NOT compile_fn+validate_fn; max_num_iterations bounds iterations but each iteration still needs many validations (10+); even bounded to 50 iterations it's too slow for e2e NMS graph",
+    "nncf_ignored_scope": "Split and Concat operations cannot be included in ignored_scope (NNCF requires them to be quantized); Sigmoid/Softmax/Conv/Mul/model.N.N work fine",
+    "tensorrt_float": "trt.DataType.FLOAT (stronger than HALF) for head Conv layers via OBEY_PRECISION_CONSTRAINTS gives better score fidelity than FP16",
+    "tensorrt_calib_data": "MinMax calibrator saturates at ~1000 calibration images; more data (2000, 4990) makes results WORSE",
+    "pycocotools": "COCO annotations JSON can be corrupt in this repo (instances_val2017.json); use .verified.json variant"
+  },
+  "constraints_respected": [
+    "attempt44 immutable (7/7 SHA-verified unchanged throughout)",
+    "investigacion_vision_runtime_2026.md never touched (untracked)",
+    "No CUDA custom kernels (trt.DataType + OBEY only)",
+    "No competitive claims vs Ultralytics",
+    "Non-commercial/non-production license",
+    "Honest documentation of failures (INT8 documented as FAIL/PARTIAL_PASS with root cause)",
+    "Evidence is observed_unsigned_development kind (not certified, not signed, not publishable)",
+    "Self-reviewed only (no independent reviewer pass)"
+  ],
+  "final_state": {
+    "git_branch": "main",
+    "last_commit": "0849464",
+    "tests": "549 passed, 2 skipped, 0 failed",
+    "ruff": "clean",
+    "readme_certification_table": "current and honest",
+    "all_evidence_files": "valid JSON, committed"
+  }
+}
