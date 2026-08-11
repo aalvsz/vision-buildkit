@@ -26,3 +26,24 @@ The supplied COCO128 corpus currently fails the strict image/label-stem gate (tw
 All twelve terminal weight/bias tensors are trainable and are the exact optimizer set. The CPU replay-smoke uses decoded curated image/label pairs and fails unless every one of the twelve target tensors changes. Biases are intentionally trainable because the final Conv2d layers have biases and score calibration depends on their offsets.
 
 The smoke and export use 640x640 and prove output `[1,84,8400]`, plain opset 17, ONNX checker, and frozen corpus hashes. It must not claim AIPU evidence without a separately authorized AIPU run.
+
+## Completed CPU-simulator screen
+
+The corrected plain-ONNX head-QAT artifact was quantized with the unchanged
+Voyager 1.7 `per_tensor_min_max` configuration and screened through the CPU
+quantized-model simulator. The run is recorded in
+`artifacts/cpu-screen/receipt.json`; the simulator returned exit code 2 and
+the frozen decision was **FAIL**. Candidate mAP50-95 was `0.324355` versus
+`0.282699` for the corrected source on the ten-image regression fixture, but
+fidelity failed: coverage `0.965517` (required `>=0.98`), one class mismatch
+(required `0`), and maximum score delta `0.448224` (required `<=0.10`). The
+candidate prediction bytes differ from the prior baseline, so this is a real
+negative result rather than a no-op. The candidate is not eligible for AIPU
+execution or production promotion. Its 19 unique scores, including nine
+exactly equal to `0.5`, confirm that score compression remains the dominant
+failure mode.
+
+The next technical path is a new, disjoint QAT pilot whose fake-quantizer is
+matched more closely to Voyager's per-tensor min/max behavior, followed by
+source-retention and held-out quantization gates. Do not tune the frozen
+ten-image fixture or use post-hoc score calibration as an INT8 artifact claim.
