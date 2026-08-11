@@ -16,7 +16,8 @@ def main() -> None:
     p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True); p.add_argument('--replay-smoke',action='store_true')
     a=p.parse_args()
     if a.epochs != 1 or (not a.replay_smoke and a.max_batches != 126) or (a.replay_smoke and a.max_batches != 1) or a.fresh_output.exists() or not (a.lr>0 and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
-    if sha256_file(a.dataset_manifest) != a.dataset_manifest_sha256: raise SystemExit('FAIL_CLOSED: curated manifest SHA mismatch')
+    binding=json.loads((Path(__file__).parent/'curated-manifest.binding.json').read_text())
+    if str(a.dataset_manifest)!=binding['manifest_path'] or a.dataset_manifest_sha256!=binding['sha256'] or sha256_file(a.dataset_manifest) != binding['sha256']: raise SystemExit('FAIL_CLOSED: committed curated binding mismatch')
     manifest=json.loads(a.dataset_manifest.read_text());
     if manifest.get('status') != 'accepted_curated_pairs' or manifest.get('cardinality') != 126 or len(manifest.get('records',[])) != 252: raise SystemExit('FAIL_CLOSED: malformed curated manifest')
     included=set(manifest.get('included_stems',[])); record_stems={x['stem'] for x in manifest['records']}
@@ -27,6 +28,10 @@ def main() -> None:
     for record in eval_binding['files']:
         path=Path(eval_binding['root'])/record['path']
         if path.is_symlink() or not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit('FAIL_CLOSED: sealed eval binding')
+    if len(eval_binding['files']) != 20: raise SystemExit('FAIL_CLOSED: eval image count')
+    for relative, expected_hash in binding['eval_split_hashes'].items():
+        path=Path(eval_binding['root'])/relative
+        if path.is_symlink() or not path.is_file() or sha256_file(path)!=expected_hash: raise SystemExit('FAIL_CLOSED: split JSON binding')
     root=a.dataset_manifest.parent
     expected_paths=set()
     for record in manifest.get('records',[]):

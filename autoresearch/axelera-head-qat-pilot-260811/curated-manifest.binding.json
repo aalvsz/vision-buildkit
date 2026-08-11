@@ -1,4 +1,10 @@
 {
-  "manifest_path": "/Users/ander.alvarez/dev/datasets/coco128-qat-curated-260811-v3/manifest.json",
-  "sha256": "60b04493c8919fc8ce03f77a1d6ae639fe2daeb086f0adc924aa602426f4ef71"
+  "manifest_path": "/Users/ander.alvarez/dev/datasets/coco128-qat-curated-260811-v4/manifest.json",
+  "sha256": "7a6c4714583cb40513f21a23533974929351576aa65828ce66503f8e51e3fc98",
+  "eval_split_hashes": {
+    "dev.instances.json": "1fe208913a05ac4964e48ada374f3bbee9c411c6252540a91be5861d0ae132f8",
+    "dev.manifest.json": "3c7b91c741e39c4631191c2d75e6cc978b9c91a0bb41edb01b25f811c125d2ea",
+    "heldout.instances.json": "3772b7d58d074cbd4092eb5791a21331e3a6e06c9994b150ca632bbe74b7b15c",
+    "heldout.manifest.json": "733655af775ea08a045bd6b1ef9c8899baff2602e46631910a021286f42e76c1"
+  }
 }
