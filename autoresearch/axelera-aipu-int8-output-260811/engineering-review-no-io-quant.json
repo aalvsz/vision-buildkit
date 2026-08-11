@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "review_id": "er-no-io-quant",
+  "reviewer_id": "axelera_harness_review-sol-high",
+  "decision": "ACCEPTED",
+  "candidate_id": "raw-output-minmax-no-io-quant",
+  "candidate_commit": "de24df8b1329d4acc70fc29adea5abeedc09ba60",
+  "candidate_manifest_sha256": "98977476d6f565abe9c243ea0b532876d3cf4436f6c8d2bd1a772382061c704a",
+  "one_variable_change": "remove_io_quantization=false to true",
+  "preflight": [
+    "compile_config.json must retain remove_io_quantization=true",
+    "quantized_model.pt SHA must differ from baseline 98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "terminate before frozen screening if either condition fails"
+  ],
+  "interpretation_constraint": "The setting may affect input and output boundaries, so any improvement cannot be attributed exclusively to the six output tensors.",
+  "safe_next_action": "Run host QUANTIZE with metis none and apply the preflight before evaluation."
+}
