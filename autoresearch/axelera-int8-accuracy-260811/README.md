@@ -46,3 +46,27 @@ scheme. This is a hypothesis, not a vendor-guaranteed behavior.
    the device.
 4. Do not stop or alter the active translation process. AIPU execution remains
    blocked while that process owns `/dev/metis-0:3:0`.
+
+## Terminal screening result
+
+Three min-max compiler-flag ablations (`single_asymmetric` MatMul,
+channel-wise depthwise weights, and floating residuals) produced byte-identical
+predictions to the baseline. Histogram calibration completed on the accepted
+opset-17 source but still failed the SDK 1.7.0 pinned-zero MatMul exporter
+constraint. These branches are discarded.
+
+The materially different raw-output graph (`end2end=false`, output
+`(1, 84, 8400)`) was then screened with deterministic external class-aware
+NMS. It improved the CPU-simulator candidate mAP from `0.295937` to `0.324403`
+and coverage from `0.859649` to `0.965517`. It still failed: one class
+mismatch, coverage below `0.98`, and maximum score delta `0.448225`. This is a
+promising research direction, not an accepted artifact and not an AIPU result.
+The 64 candidate detections contain only 19 unique scores (nine are exactly
+`0.5`), so the mAP increase may reflect score ties/reordering and added
+detections rather than faithful score recovery.
+
+Do not spend an AIPU compile/run window on the current artifact. First repeat
+the raw-output result with a distinct calibration seed and a disjoint held-out
+set, then perform confidence-head sensitivity analysis. Only a reproducible
+candidate that improves the frozen and held-out gates should be compiled and
+run after the translation service releases the device.

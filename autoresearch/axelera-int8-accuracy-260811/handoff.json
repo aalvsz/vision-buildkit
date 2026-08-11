@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-11",
+  "state": "WRAPPED",
+  "outcome": "NO_ACCEPTED_AXELERA_INT8_ARTIFACT_RAW_OUTPUT_DIRECTION_IMPROVED",
+  "scope": "YOLO26n Axelera SDK 1.7.0 PTQ screening on the frozen ten-image COCO subset",
+  "device": {
+    "host": "100.127.83.2",
+    "hostname": "axe-ubuntu-125",
+    "sdk_git": "7e2672f",
+    "sdk_version": "1.7.0",
+    "runtime": "1.7.0-1",
+    "firmware": "1.7.0",
+    "aipu_execution_in_this_phase": false,
+    "blocker": "PID 1603 /home/ubuntu/chameleon-translation/metis_openai.py owns /dev/metis-0:3:0",
+    "service_preserved": true
+  },
+  "frozen_gates": {
+    "map_drop_max": 0.002,
+    "coverage_min": 0.98,
+    "max_score_delta_max": 0.1,
+    "class_mismatches": 0
+  },
+  "source_profiles": {
+    "historical_end_to_end_opset20_sha256": "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c",
+    "sdk_end_to_end_opset17_sha256": "d502815b0ebd8a97d8ea48ddf23278118555f08d66022abb5a804deb4158d960",
+    "raw_output_opset17_sha256": "db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9",
+    "end_to_end_equivalence_scope": "The two end-to-end sources had max raw output delta 0.0 on the frozen ten images only; this is not whole-domain equivalence."
+  },
+  "terminal_findings": [
+    "Histogram plus single_asymmetric completed 200 calibration images on opset 17 but failed the pinned-zero MatMul export constraint.",
+    "Three min-max compiler-flag ablations produced byte-identical candidate predictions to the baseline.",
+    "Raw-output min-max moved NMS/top-k out of the INT8 graph and was the only candidate with material improvement.",
+    "No candidate passed all gates and no new AIPU quality or latency claim is supported."
+  ],
+  "best_research_direction": {
+    "candidate": "raw-output-minmax",
+    "evidence_kind": "Axelera CPU quantized-model simulator",
+    "source_map50_95": 0.28269877658095477,
+    "candidate_map50_95": 0.32440287457317163,
+    "map_drop": -0.04170409799221686,
+    "coverage": 0.9655172413793104,
+    "max_score_delta": 0.448224812746048,
+    "class_mismatches": 1,
+    "candidate_detections": 64,
+    "candidate_unique_scores": 19,
+    "candidate_scores_exactly_half": 9,
+    "decision": "FAIL_KEEP_RESEARCH_DIRECTION_ONLY",
+    "candidate_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "manifest_sha256": "e35ad8f98fba9a4f08e11e8bd56dbbf59d41a3b21c1120d9483a6bbaeb281128",
+    "compiler_log_sha256": "4debd678a50b2a516eb11314074fe08ad2ef7c37bea03edc66e405ead0fba1cf",
+    "harness_sha256": "0d7552e9a0e2a09645e248b8202f9cc4628d5bd2d98f343cf9f91a687a84ba3a"
+  },
+  "confounders": [
+    "The frozen ten-image set is a screening set, not a held-out or full-COCO accuracy result.",
+    "The raw-output graph uses a different external decoder and source reference from the end-to-end graph, so absolute mAP values are not a controlled cross-graph comparison.",
+    "Only one deterministic calibration ordering was run for the raw-output candidate.",
+    "The screen decoder uses argmax while the YAML evaluation override enables multi-label decoding; AIPU postprocessing parity is unproven.",
+    "The apparent mAP gain may be caused by coarse score ties/reordering and added detections rather than faithful confidence recovery.",
+    "The CPU simulator is directionally useful but historically much more optimistic than real AIPU execution."
+  ],
+  "next_steps": [
+    "First establish raw-FP32 external-decoder equivalence against the native/end-to-end reference.",
+    "Repeat raw-output PTQ with a distinct calibration seed and evaluate on a preregistered disjoint held-out set.",
+    "Run layerwise sensitivity analysis on the confidence-head Conv/Sigmoid path; keep sensitive outputs in higher precision if the SDK permits it.",
+    "Test a newer Axelera SDK/compiler that resolves the pinned-zero MatMul exporter constraint.",
+    "If PTQ remains outside gates, use targeted QAT or an explicit Q/DQ export, subject to verified Axelera import support.",
+    "Compile and execute on AIPU only after a candidate improves both frozen and held-out gates and the translation service releases the device."
+  ],
+  "review": {
+    "harness": "Independent reviewer ACCEPTED before execution after two blockers were fixed.",
+    "scientific_ptq_plateau": "Independent reviewer discarded all end-to-end compiler-flag candidates and recommended the raw-output graph intervention."
+  }
+}
