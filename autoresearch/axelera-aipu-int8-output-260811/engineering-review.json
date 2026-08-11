@@ -5,14 +5,15 @@
   "decision": "ACCEPTED",
   "candidate_id": "raw-output-minmax-int32-output",
   "candidate_commit": "80ead8ad7fdb2608aec4350fc57b0113d021e97c",
-  "candidate_manifest_sha256": "4b4a7f633a10d345ee5ba6b6c418bfd1e335cbd3dcc679f9d8c1751ca28477be",
+  "candidate_manifest_sha256": "05aeda64051d9d6b5e1ff88937ed35b66262c6cf13b73fd075dd71d859a417e3",
   "reviewed_command": "deploy.py ax_models/cv_engine_experiments/raw-output-minmax-int32-output.yaml --model yolo26n-raw-output-minmax-int32-output --mode QUANTIZE --metis none --build-root experiments/cv-engine-94527ce/build-raw-output-minmax-int32-output --data-root /home/ubuntu/voyager-sdk/data --num-cal-images 200 --default-representative-images --dump-core-model",
   "findings": [
     "TOML differs from the accepted raw baseline only by quantization_output_dtype=int32.",
     "SDK coerces int32 to QuantizerIntegerDType.INT32.",
     "YAML changes only candidate identities and its unique TOML path.",
     "The raw graph partitions at six final Conv outputs while Sigmoid remains in FP postprocessing.",
-    "The full command binds the model, fresh build root, data root, 200-image calibration semantics, metis=none, and core-model dump."
+    "The full command binds the model, fresh build root, data root, 200-image calibration semantics, metis=none, and core-model dump.",
+    "The final manifest's baseline, harness, and hardware/software composite hashes match the canonical ledger baseline objects."
   ],
   "interpretation_constraint": "The flag affects all six boundary tensors, including box and confidence heads; it is not confidence-only.",
   "aipu_execution_authorized_by_review": false,

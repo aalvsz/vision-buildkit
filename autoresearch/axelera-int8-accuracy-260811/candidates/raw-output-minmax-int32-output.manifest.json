@@ -54,9 +54,9 @@
   },
   "execution_status": "not_run",
   "non_claim": "This manifest records an unrun candidate for CPU-simulator screening only. It contains no AIPU compile, execution, quality, latency, or deployment result.",
-  "baseline_sha256": "sha256:c0ba4525f0d3b7df6346778c56493260189ba3ba057ecd30603103607c83c5a3",
-  "harness_sha256": "sha256:d3b4c147a54d94f5735614e669df79e272134e3c55c40c436c9fdaab7e9858bd",
-  "hardware_software_sha256": "sha256:350b9aa3ebc1c76d5bf304a28afaffc4142a5f06f005a6571b83b02d6d0ec799",
+  "baseline_sha256": "sha256:aa6d1a72e34db21453acfc5da2f582731cf9409d944f9e2e38ba1a0a27f0306a",
+  "harness_sha256": "sha256:f4d8f2ef00d9bf6c70a43ec34f0cd653249b681e111c2ab8135fb48e00300079",
+  "hardware_software_sha256": "sha256:bb7f5b52f7f9d06d4425923fc004fbaac7dd1b7ff3f11dc66a324fcb0cdae364",
   "artifacts": [
     {
       "kind": "local",
@@ -75,8 +75,8 @@
     },
     {
       "kind": "id",
-      "path_or_id": "id:axe-ubuntu-125/metis-aipu/sdk-1.7.0/git-7e2672f/runtime-1.7.0-1/firmware-1.7.0",
-      "sha256": "sha256:350b9aa3ebc1c76d5bf304a28afaffc4142a5f06f005a6571b83b02d6d0ec799"
+      "path_or_id": "id:axe-ubuntu-125-axelera-metis-cpu-quantized-model-simulator-only/voyager-sdk-1.7.0-git-7e2672f-runtime-1.7.0-1-firmware-1.7.0",
+      "sha256": "sha256:bb7f5b52f7f9d06d4425923fc004fbaac7dd1b7ff3f11dc66a324fcb0cdae364"
     }
   ]
 }
