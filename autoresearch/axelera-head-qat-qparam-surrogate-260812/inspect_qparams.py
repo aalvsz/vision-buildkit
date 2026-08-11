@@ -35,11 +35,15 @@ def main():
   qre_name=f'model_dot_23_cv{branch}_dot_{index}_cv{branch}_dot_{index}_dot_2_conv_to_output_qre'
   if qre_name not in modules: raise SystemExit(f'FAIL_CLOSED: expected exact output qre for {name}')
   qre_module=modules[qre_name]; qre_fields={key:getattr(qre_module,key,None) for key in ('scale','zero_point','output_scale','output_zero_point')}
-  if not any(value is not None for value in qre_fields.values()): raise SystemExit(f'FAIL_CLOSED: missing QRE qparams {name}')
+  direct=(qre_fields['scale'],qre_fields['zero_point']); output=(qre_fields['output_scale'],qre_fields['output_zero_point'])
+  direct_present=tuple(value is not None for value in direct); output_present=tuple(value is not None for value in output)
+  if direct_present not in {(False,False),(True,True)} or output_present not in {(False,False),(True,True)} or (all(direct_present) == all(output_present)):
+   raise SystemExit(f'FAIL_CLOSED: ambiguous or incomplete QRE affine pair {name}')
   for key,value in qre_fields.items():
    if value is not None:
     values=np.asarray(value).reshape(-1) if hasattr(value,'__array__') else [value]
     if not all(math.isfinite(float(x)) for x in values) or ('scale' in key and not all(float(x)>0 for x in values)): raise SystemExit(f'FAIL_CLOSED: invalid QRE qparam {name}:{key}')
   rows.append({'name':name,'encoded_module':encoded,'output_qre_module':qre_name,'output_qre_qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in qre_fields.items()},'qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in fields.items()}})
- a.output.write_text(json.dumps({'manifest_sha256':sha(a.manifest),'targets':rows},indent=2,sort_keys=True)+'\n')
+ with a.output.open('x') as handle:
+  handle.write(json.dumps({'manifest_sha256':sha(a.manifest),'targets':rows},indent=2,sort_keys=True)+'\n')
 if __name__=='__main__': main()
