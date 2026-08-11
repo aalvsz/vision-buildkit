@@ -1,0 +1,32 @@
+{
+  "baseline": {
+    "acceptance_thresholds": {
+      "class_mismatches_max": 0,
+      "coverage_min": 0.98,
+      "map_drop_max": 0.002,
+      "max_score_delta_max": 0.1
+    },
+    "artifact_or_model_id": "sha256:98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "commit": "96cd401c1ea639fc656fd8750474e3283612a0b8",
+    "hardware_software": {
+      "hardware": "axe-ubuntu-125 Axelera Metis, CPU quantized-model simulator only",
+      "software": "Voyager SDK 1.7.0 git 7e2672f, runtime 1.7.0-1, firmware 1.7.0"
+    },
+    "harness": {
+      "command": "eval_quantized_raw.py --threshold 0.25",
+      "settings": "frozen ten-image COCO subset, argmax, class-aware NMS IoU 0.7, max 300"
+    },
+    "metrics": {
+      "candidate_map50_95": 0.32440287457317163,
+      "candidate_unique_scores": 19,
+      "class_mismatches": 1,
+      "coverage": 0.9655172413793104,
+      "max_score_delta": 0.448224812746048
+    }
+  },
+  "classic_autoresearch_only": true,
+  "created_at": "2026-08-11T14:27:39.345278+00:00",
+  "max_experiments": 1,
+  "plateau_limit": 1,
+  "schema_version": "2.0"
+}

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "candidate_id": "raw-output-minmax-smoothquant-03",
+  "candidate_commit": "a134a369001fa47e93f7d05bc3be0e34cb7cbc8b",
+  "hypothesis": "Setting smoothquant_coefficient to 0.3 applies SDK SmoothQuant cross-layer equalization to the raw-output YOLO26n graph, changing activation and weight ranges feeding the final score-head Conv outputs and potentially improving frozen CPU-simulator score fidelity relative to raw-output-minmax.",
+  "one_variable_change": {
+    "path": "autoresearch/axelera-int8-accuracy-260811/candidates/raw-output-minmax-smoothquant-03.toml",
+    "setting": "smoothquant_coefficient",
+    "from": null,
+    "to": 0.3
+  },
+  "baseline": {
+    "raw_source": {
+      "path_or_id": "ssh://axe-ubuntu-125/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw.onnx",
+      "profile": "raw-opset17-end2end-false",
+      "sha256": "sha256:db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9"
+    },
+    "raw_baseline_results": {
+      "path": "autoresearch/axelera-int8-accuracy-260811/screen-raw-output-minmax/results.json",
+      "sha256": "sha256:4677f074cfd7eba29c31a071b6abdfc54ad2e829b6e59fede3bb80290e2c947f"
+    }
+  },
+  "canonical_harness": {
+    "path": "autoresearch/axelera-int8-accuracy-260811/eval_quantized_raw.py",
+    "sha256": "sha256:0d7552e9a0e2a09645e248b8202f9cc4628d5bd2d98f343cf9f91a687a84ba3a"
+  },
+  "frozen_dataset": {
+    "annotations_path_or_id": "ssh://axe-ubuntu-125/home/ubuntu/vision-buildkit/autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset/instances.json",
+    "annotations_sha256": "sha256:f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c"
+  },
+  "hardware_software": {
+    "hostname": "axe-ubuntu-125",
+    "aipu": "Metis AIPU",
+    "sdk_version": "1.7.0",
+    "sdk_git_revision": "7e2672f",
+    "runtime_version": "1.7.0-1",
+    "firmware_version": "1.7.0"
+  },
+  "command_intent": {
+    "mode": "QUANTIZE",
+    "metis": "none",
+    "command": "deploy.py ax_models/cv_engine_experiments/raw-output-minmax-smoothquant-03.yaml --model yolo26n-raw-output-minmax-smoothquant-03 --mode QUANTIZE --metis none --build-root experiments/cv-engine-94527ce/build-raw-output-minmax-smoothquant-03 --data-root /home/ubuntu/voyager-sdk/data --num-cal-images 200 --default-representative-images --dump-core-model"
+  },
+  "gates": {
+    "preflight": {
+      "effective_compile_config_smoothquant_coefficient": 0.3,
+      "quantized_model_sha256_must_differ_from": "sha256:98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+      "candidate_predictions_sha256_must_differ_from": "sha256:be3fec10baa867de3702f57a0bd9754a3d340f6ea8cfe9de2a09ea3ee67ce20a",
+      "evaluation_order": [
+        "verify effective compile configuration",
+        "verify quantized model artifact differs",
+        "run frozen CPU-simulator prediction generation",
+        "verify candidate prediction artifact differs",
+        "interpret frozen metrics"
+      ],
+      "failure_action": "terminate before interpreting frozen metrics"
+    },
+    "map_drop_max": 0.002,
+    "coverage_min": 0.98,
+    "max_score_delta_max": 0.1,
+    "class_mismatches_max": 0,
+    "required_follow_up": [
+      "independent reproduction",
+      "held-out-model evaluation",
+      "Metis AIPU compile and execution"
+    ]
+  },
+  "execution_status": "not_run",
+  "non_claim": "This manifest records an unrun candidate for CPU-simulator screening only. It contains no AIPU compile, execution, quality, latency, or deployment result.",
+  "baseline_sha256": "sha256:aa6d1a72e34db21453acfc5da2f582731cf9409d944f9e2e38ba1a0a27f0306a",
+  "harness_sha256": "sha256:f4d8f2ef00d9bf6c70a43ec34f0cd653249b681e111c2ab8135fb48e00300079",
+  "hardware_software_sha256": "sha256:bb7f5b52f7f9d06d4425923fc004fbaac7dd1b7ff3f11dc66a324fcb0cdae364",
+  "artifacts": [
+    {
+      "kind": "local",
+      "path_or_id": "/Users/ander.alvarez/dev/perso/cv-engine/autoresearch/axelera-int8-accuracy-260811/candidates/raw-output-minmax-smoothquant-03.yaml",
+      "sha256": "sha256:3c1939fbd6014a55c02d1be7a8093220017c7563abf0888515d537d54d11c069"
+    },
+    {
+      "kind": "local",
+      "path_or_id": "/Users/ander.alvarez/dev/perso/cv-engine/autoresearch/axelera-int8-accuracy-260811/candidates/raw-output-minmax-smoothquant-03.toml",
+      "sha256": "sha256:872f4e6220c908457b0a243e4ac8c732915cdf00e4dc027c5620c1875f6b36fc"
+    },
+    {
+      "kind": "remote",
+      "path_or_id": "ssh://axe-ubuntu-125/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw.onnx",
+      "sha256": "sha256:db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9"
+    },
+    {
+      "kind": "id",
+      "path_or_id": "id:axe-ubuntu-125-axelera-metis-cpu-quantized-model-simulator-only/voyager-sdk-1.7.0-git-7e2672f-runtime-1.7.0-1-firmware-1.7.0",
+      "sha256": "sha256:bb7f5b52f7f9d06d4425923fc004fbaac7dd1b7ff3f11dc66a324fcb0cdae364"
+    }
+  ]
+}

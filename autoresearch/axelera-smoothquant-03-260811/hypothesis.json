@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "h-smoothquant-03",
+  "hypothesis": "Applying SmoothQuant cross-layer equalization with coefficient 0.3 to the raw-output min-max baseline changes executed activation and weight ranges enough to reduce YOLO26n confidence-score error without violating localization or class parity gates.",
+  "one_variable_change": "smoothquant_coefficient: null to 0.3",
+  "frozen_baseline": {
+    "candidate": "raw-output-minmax",
+    "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "candidate_predictions_sha256": "be3fec10baa867de3702f57a0bd9754a3d340f6ea8cfe9de2a09ea3ee67ce20a",
+    "map50_95": 0.32440287457317163,
+    "coverage": 0.9655172413793104,
+    "max_score_delta": 0.448224812746048,
+    "class_mismatches": 1
+  },
+  "run_budget": 1,
+  "plateau_limit": 1,
+  "rollback_triggers": [
+    "The effective compile config does not retain smoothquant_coefficient=0.3.",
+    "The quantized model is byte-identical to the frozen baseline.",
+    "The frozen simulator candidate predictions are byte-identical to the frozen baseline.",
+    "Any frozen accuracy or parity gate regresses or remains failed."
+  ],
+  "success_gates": {
+    "map_drop_max": 0.002,
+    "coverage_min": 0.98,
+    "max_score_delta_max": 0.1,
+    "class_mismatches_max": 0
+  },
+  "non_claim": "Host-only quantization and CPU simulator screening do not establish Metis AIPU compilation, execution, accuracy, stability, latency, or deployment quality."
+}

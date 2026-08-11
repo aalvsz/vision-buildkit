@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "review_id": "er-smoothquant-03",
+  "reviewer_id": "axelera-harness-review-sol-high",
+  "decision": "ACCEPTED",
+  "candidate_id": "c-smoothquant-03",
+  "candidate_commit": "a134a369001fa47e93f7d05bc3be0e34cb7cbc8b",
+  "candidate_manifest_sha256": "43c8673cb477d01bec8800233fd434c357d01b113b61dcbce4532b3e7d892015",
+  "one_variable_change": "smoothquant_coefficient: null to 0.3",
+  "review_findings": [
+    "The candidate commit contains only the new YAML and TOML.",
+    "The TOML differs scientifically from raw-output-minmax only by smoothquant_coefficient=0.3.",
+    "The YAML changes only unique candidate identities and compiler-config path.",
+    "SDK 1.7 exposes the setting as an EXPERT floating-point coefficient; 0.3 is valid.",
+    "The command is host-only QUANTIZE with metis none and retains the frozen 200-image calibration contract."
+  ],
+  "fail_closed_order": [
+    "Verify ledger integrity and remaining budget.",
+    "Verify local and staged remote artifact hashes and fresh output paths.",
+    "Require effective smoothquant_coefficient exactly 0.3.",
+    "Require quantized_model.pt SHA to differ from baseline.",
+    "Run the canonical frozen harness and capture exit code 0 or 2.",
+    "Require candidate prediction SHA to differ from baseline before interpreting metrics."
+  ],
+  "authorization": "One host-only QUANTIZE --metis none run; no physical AIPU compilation or execution."
+}
