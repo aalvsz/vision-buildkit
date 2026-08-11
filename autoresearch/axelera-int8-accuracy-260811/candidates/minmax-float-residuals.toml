@@ -1,0 +1,4 @@
+quantization_scheme = "per_tensor_min_max"
+do_quantize_residuals = false
+ignore_weight_buffers = false
+
