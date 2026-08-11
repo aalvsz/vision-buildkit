@@ -1,0 +1,4 @@
+quantization_scheme = "per_tensor_histogram"
+quantize_matmul_strategy = "single_asymmetric"
+ignore_weight_buffers = false
+
