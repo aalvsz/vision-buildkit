@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import random
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -23,14 +24,17 @@ TARGETS = tuple(
     [f"model.23.cv2.{index}.2" for index in range(3)]
     + [f"model.23.cv3.{index}.2" for index in range(3)]
 )
-INT8_QMIN, INT8_QMAX = -128, 127
+INT8_QMIN, INT8_QMAX = -127, 127  # symmetric narrow-range INT8, no unused -128 bin
+CHECKPOINT_SHA256 = "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
 
 
 def seed_everything(seed: int = 260811) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.mps.manual_seed(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+    torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True, warn_only=False)
 
 
@@ -130,7 +134,8 @@ def freeze_except_targets(model: nn.Module) -> tuple[str, ...]:
         module_name = name.rsplit(".", 1)[0]
         parameter.requires_grad = module_name in allowed
     trainable = tuple(name for name, p in model.named_parameters() if p.requires_grad)
-    if not trainable or any(name.rsplit(".", 1)[0] not in allowed for name in trainable):
+    expected = tuple(f"{target}.{field}" for target in TARGETS for field in ("weight", "bias"))
+    if trainable != expected:
         raise RuntimeError(f"freeze gate failed: {trainable}")
     return trainable
 
@@ -140,6 +145,38 @@ def parameter_hashes(model: nn.Module) -> dict[str, str]:
         name: hashlib.sha256(parameter.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
         for name, parameter in model.named_parameters()
     }
+
+
+def state_dict_hashes(model: nn.Module) -> dict[str, str]:
+    """Hash parameters and buffers, so BatchNorm drift cannot hide behind freezing."""
+    return {name: hashlib.sha256(value.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
+            for name, value in model.state_dict().items()}
+
+
+def assert_state_only_targets_changed(before: dict[str, str], model: nn.Module) -> set[str]:
+    after = state_dict_hashes(model)
+    changed = {name for name in before if before[name] != after[name]}
+    allowed = {f"{target}.{field}" for target in TARGETS for field in ("weight", "bias", "fake_quant_calls")}
+    unexpected = sorted(changed - allowed)
+    if unexpected:
+        raise RuntimeError(f"non-target state mutation: {unexpected}")
+    return changed
+
+
+def _training_head_without_buffer_updates(model: nn.Module) -> None:
+    """Expose Detect training branch while all BatchNorm modules remain eval/frozen."""
+    model.train()
+    for module in model.modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            module.eval()
+
+
+def _teacher_training_head_eval_backbone(teacher: nn.Module) -> None:
+    teacher.eval()
+    teacher.model[-1].train()  # only Detect needs its training forward branch
+    for module in teacher.modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            module.eval()
 
 
 def changed_parameter_names(before: dict[str, str], model: nn.Module) -> set[str]:
@@ -177,8 +214,10 @@ def one_batch_step(
         from ultralytics.utils import IterableSimpleNamespace
 
         student.args = IterableSimpleNamespace(**{**DEFAULT_CFG_DICT, **student.args})
-    student.train()
-    teacher.train()  # Match head branches used by DetectionModel.loss; teacher is frozen.
+    if batch["img"].device.type == "mps" and os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") != "0":
+        raise RuntimeError("FAIL_CLOSED: MPS requires PYTORCH_ENABLE_MPS_FALLBACK=0")
+    _training_head_without_buffer_updates(student)
+    _teacher_training_head_eval_backbone(teacher)
     optimizer.zero_grad(set_to_none=True)
     student_preds = student(batch["img"])
     detection_loss, _ = student.loss(batch, preds=student_preds)
@@ -203,11 +242,15 @@ def one_batch_step(
 
 def build_dataset_manifest(dataset_root: Path, calibration_names: Path, regression_dir: Path, output: Path) -> dict:
     image_dir, label_dir = dataset_root / "images" / "train2017", dataset_root / "labels" / "train2017"
-    files = sorted([*image_dir.glob("*.jpg"), *label_dir.glob("*.txt")])
+    images, labels = sorted(image_dir.glob("*.jpg")), sorted(label_dir.glob("*.txt"))
+    if {p.stem for p in images} != {p.stem for p in labels}:
+        raise RuntimeError("image/label stem mismatch")
+    files = sorted([*images, *labels])
     if not files:
         raise RuntimeError("empty QAT corpus")
     calibration = {line.strip() for line in calibration_names.read_text().splitlines() if line.strip()}
-    regression = {path.name for path in regression_dir.glob("*.jpg")}
+    regression_files = sorted(regression_dir.glob("*.jpg"))
+    regression = {path.name for path in regression_files}
     records, overlaps = [], []
     for path in files:
         record = {"path": str(path.relative_to(dataset_root)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -216,8 +259,9 @@ def build_dataset_manifest(dataset_root: Path, calibration_names: Path, regressi
             overlaps.append(path.name)
     if overlaps:
         raise RuntimeError(f"train corpus overlap forbidden: {sorted(set(overlaps))}")
-    manifest = {"schema_version": 1, "dataset_root": str(dataset_root), "files": records, "file_count": len(records),
-                "calibration_names_file": str(calibration_names), "regression_dir": str(regression_dir), "overlap": []}
+    manifest = {"schema_version": 2, "dataset_root": str(dataset_root), "files": records, "file_count": len(records),
+                "image_label_stems_equal": True, "calibration_names_sha256": hashlib.sha256(calibration_names.read_bytes()).hexdigest(),
+                "calibration_names": sorted(calibration), "regression_files": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in regression_files], "overlap": []}
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest
 

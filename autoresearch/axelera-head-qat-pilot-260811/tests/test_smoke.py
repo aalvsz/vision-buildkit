@@ -27,6 +27,9 @@ def test_stock_checkpoint_and_head_qat_mps_smoke(tmp_path):
     output=tmp_path/'pilot.onnx'; sample=torch.zeros((1,3,640,640),device='mps'); export_plain_raw_onnx(model,output,sample)
     import onnx, onnxruntime as ort
     graph=onnx.load(output); onnx.checker.check_model(graph)
+    assert [(x.domain,x.version) for x in graph.opset_import] == [('',17)]
+    assert graph.graph.output[0].name == 'output0' and graph.graph.output[0].type.tensor_type.elem_type == onnx.TensorProto.FLOAT
+    assert len(graph.functions) == 0
     assert [d.dim_value for d in graph.graph.output[0].type.tensor_type.shape.dim] == [1,84,8400]
     assert not any(n.op_type in {'QuantizeLinear','DequantizeLinear','QLinearConv'} for n in graph.graph.node)
     model.cpu().eval(); model.model[-1].end2end=False
@@ -39,8 +42,8 @@ def test_stock_checkpoint_and_head_qat_mps_smoke(tmp_path):
 
 def test_dataset_manifest(tmp_path):
     root=Path('/Users/ander.alvarez/dev/datasets/coco128-qat-260811/coco128')
-    result=build_dataset_manifest(root,Path('/tmp/cv_engine_axelera_calibration_names.txt'),ROOT/'autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset',tmp_path/'dataset.json')
-    assert result['file_count']==256 and result['overlap']==[]
+    with pytest.raises(RuntimeError,match='stem mismatch'):
+        build_dataset_manifest(root,Path(__file__).parents[1]/'calibration-names.snapshot.txt',ROOT/'autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset',tmp_path/'dataset.json')
 
 def test_ordinary_ultralytics_loss_fails_closed_on_strict_deterministic_mps():
     from ultralytics import YOLO
@@ -52,3 +55,21 @@ def test_ordinary_ultralytics_loss_fails_closed_on_strict_deterministic_mps():
            'cls':torch.tensor([[0.]],device='mps'),'bboxes':torch.tensor([[0.5,0.5,0.2,0.2]],device='mps')}
     with pytest.raises(RuntimeError,match='FAIL_CLOSED'):
         one_batch_step(student,teacher,batch,optimizer)
+
+def _cpu_one_batch():
+    from ultralytics import YOLO
+    seed_everything(); student=YOLO(WEIGHTS).model.cpu(); teacher=copy.deepcopy(student).cpu()
+    teacher_before=state_dict_hashes(teacher); install_head_fake_qat(student); trainable=freeze_except_targets(student)
+    before=state_dict_hashes(student); optimizer=torch.optim.SGD([p for p in student.parameters() if p.requires_grad],lr=1e-5)
+    assert {id(p) for g in optimizer.param_groups for p in g['params']} == {id(p) for p in student.parameters() if p.requires_grad}
+    batch={'img':torch.zeros((1,3,640,640)),'batch_idx':torch.tensor([0]),'cls':torch.tensor([[0.]]),'bboxes':torch.tensor([[0.5,0.5,0.2,0.2]])}
+    values=one_batch_step(student,teacher,batch,optimizer)
+    changed=assert_state_only_targets_changed(before,student)
+    assert state_dict_hashes(teacher)==teacher_before and not teacher.training
+    assert all(torch.isfinite(p).all() and p.grad is not None and torch.isfinite(p.grad).all() for p in student.parameters() if p.requires_grad)
+    return values, changed, parameter_hashes(student)
+
+def test_two_seeded_cpu_one_batches_are_reproducible_and_target_only():
+    first=_cpu_one_batch(); second=_cpu_one_batch()
+    assert first[0] == second[0] and first[2] == second[2]
+    assert any(name.endswith(('.weight','.bias')) for name in first[1])

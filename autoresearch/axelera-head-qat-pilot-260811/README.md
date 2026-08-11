@@ -21,4 +21,8 @@ PYTORCH_ENABLE_MPS_FALLBACK=0 /Users/ander.alvarez/dev/perso/cv-engine/.venv/bin
 
 The evaluation script does not download unless `--fetch --official-url URL` is supplied, and verifies the pinned full-annotation SHA-256 before selecting its deterministic ten-image dev and ten-image heldout splits. Neither split may overlap the ten regression IDs or ten previously inspected LibreYOLO IDs.
 
+The supplied COCO128 corpus currently fails the strict image/label-stem gate (two image-only and two label-only stems), so no new training manifest is emitted from it. This is an intentional fail-closed data blocker.
+
+All twelve terminal weight/bias tensors are trainable and are the exact optimizer set. The synthetic one-batch CPU smoke requires finite nonzero updates only for tensors reached by its single synthetic label; a real run must fail unless every one of the twelve target tensors changes. Biases are intentionally trainable because the final Conv2d layers have biases and score calibration depends on their offsets.
+
 The smoke test uses 64x64 only to bound work. A real experiment must export at 640x640 and prove output `[1,84,8400]`, plain opset 17, ONNX checker, ORT/PyTorch parity, frozen corpus hashes, host-only quantization artifact change, then frozen-harness screening. It must not claim AIPU evidence without a separately authorized AIPU run.
