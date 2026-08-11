@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "review_id": "sr-no-io-quant",
+  "reviewer_id": "axelera-scientific-review-sol-high",
+  "experiment_id": "e-no-io-quant",
+  "candidate_id": "c-no-io-quant",
+  "decision": "DISCARD",
+  "rationale": [
+    "The SDK retained remove_io_quantization=true and the serialized quantized model changed from 98c267e to e2badb4.",
+    "Candidate and baseline prediction files are byte-identical at SHA-256 be3fec10baa867de3702f57a0bd9754a3d340f6ea8cfe9de2a09ea3ee67ce20a.",
+    "mAP, coverage, maximum score delta, class mismatches, and the 1/4 frozen-gate verdict are unchanged."
+  ],
+  "claim_limits": [
+    "The result applies only to the frozen ten-image CPU quantized-model simulator path.",
+    "It does not establish AIPU compilation legality, AIPU numerics, latency, deployment quality, or behavior on other inputs.",
+    "The setting affects both input and output boundaries, so it is not an output-only intervention."
+  ],
+  "next_candidate": "Move the graph-cleaner boundary upstream so the six final Detect-head Conv layers, especially confidence logits, execute in floating-point postprocessing rather than in the quantized core.",
+  "next_preflight": "Inspect dumped core and postprocess graphs and prove the exact Detect-head nodes moved before screening.",
+  "aipu_gate": "Keep AIPU work blocked until a simulator candidate passes all frozen gates and then survives independent reproduction and held-out evaluation."
+}

@@ -1,0 +1,4 @@
+# metric_direction: lower_is_better
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-08-11T10:54:43Z	96cd401	0.448224812746048	0	frozen_gates_passed	1/4	baseline	raw-output-minmax CPU simulator baseline
+1	2026-08-11T10:54:43Z	de24df8	0.448224812746048	0	artifact_changed	1	keep	SDK honored remove_io_quantization and changed the model artifact, but predictions and all quality metrics were identical

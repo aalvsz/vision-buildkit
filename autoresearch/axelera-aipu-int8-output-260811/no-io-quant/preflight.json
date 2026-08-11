@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "candidate": "raw-output-minmax-no-io-quant",
+  "remove_io_quantization": true,
+  "compile_config_sha256": "dcfb2a8f012f76eed1c0643462a09b022fae27ccb9f5a5427a74c0f132612e3a",
+  "quantized_model_sha256": "e2badb4ae916cfe25ccbb2840c16b2430db575db19de7e38ab3c33cd10b2b48f",
+  "baseline_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+  "artifact_changed": true,
+  "frozen_screen_authorized": true
+}

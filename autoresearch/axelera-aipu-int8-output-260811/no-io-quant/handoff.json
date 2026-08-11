@@ -1,0 +1,50 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-08-11T10:54:43Z",
+  "status": "COMPLETE",
+  "results_tsv": "no-io-quant-results.tsv",
+  "findings": [
+    "The SDK honored remove_io_quantization and produced a distinct serialized model.",
+    "The frozen simulator predictions were byte-identical to the baseline, so accuracy and parity did not improve."
+  ],
+  "config": {
+    "goal": "Reduce Axelera raw-output YOLO26n INT8 confidence error by removing graph-boundary I/O quantization.",
+    "scope": "One-variable SDK 1.7.0 host quantization experiment; frozen ten-image COCO screen; no AIPU execution.",
+    "metric": "maximum matched-detection score delta",
+    "direction": "lower_is_better",
+    "verify": "Reviewed eval_quantized_raw.py screen at threshold 0.25 plus effective compile-config, artifact-SHA, and prediction-byte comparisons against raw-output-minmax."
+  },
+  "candidate": {
+    "id": "raw-output-minmax-no-io-quant",
+    "commit": "de24df8b1329d4acc70fc29adea5abeedc09ba60",
+    "manifest_sha256": "98977476d6f565abe9c243ea0b532876d3cf4436f6c8d2bd1a772382061c704a",
+    "requested_change": "remove_io_quantization=true",
+    "effective_change": "remove_io_quantization=true"
+  },
+  "execution": {
+    "host": "axe-ubuntu-125",
+    "sdk": "1.7.0 git 7e2672f",
+    "metis": "none",
+    "calibration_images": 200,
+    "aipu_execution": false,
+    "compile_config_sha256": "dcfb2a8f012f76eed1c0643462a09b022fae27ccb9f5a5427a74c0f132612e3a",
+    "compiler_log_sha256": "9333d1fe030dc87799cf8270478eb4f00fa5443b078e0d23fadbe33a353be93f"
+  },
+  "result": {
+    "decision": "FAIL_NO_IMPROVEMENT",
+    "source_map50_95": 0.28269877658095477,
+    "candidate_map50_95": 0.32440287457317163,
+    "coverage": 0.9655172413793104,
+    "max_score_delta": 0.448224812746048,
+    "class_mismatches": 1,
+    "gates_passed": 1,
+    "gates_total": 4,
+    "quantized_model_sha256": "e2badb4ae916cfe25ccbb2840c16b2430db575db19de7e38ab3c33cd10b2b48f",
+    "baseline_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "candidate_predictions_sha256": "be3fec10baa867de3702f57a0bd9754a3d340f6ea8cfe9de2a09ea3ee67ce20a",
+    "baseline_candidate_predictions_sha256": "be3fec10baa867de3702f57a0bd9754a3d340f6ea8cfe9de2a09ea3ee67ce20a"
+  },
+  "interpretation": "The SDK honored remove_io_quantization and produced a different serialized quantized model, but the frozen simulator emitted byte-identical candidate predictions and identical quality/parity metrics. The setting changes graph serialization without improving this inference path.",
+  "non_claim": "This phase contains no Metis AIPU compile, execution, quality, latency, or deployment result."
+}
