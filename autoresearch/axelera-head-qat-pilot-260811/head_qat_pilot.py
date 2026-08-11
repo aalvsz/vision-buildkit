@@ -239,6 +239,8 @@ def one_batch_step(
     # Ultralytics returns the three component losses for this checkpoint; reduce
     # them explicitly before backward instead of relying on Trainer-side scaling.
     loss = detection_loss.sum() + consistency_weight * consistency
+    if not torch.isfinite(loss) or not torch.isfinite(detection_loss).all() or not torch.isfinite(consistency):
+        raise RuntimeError("FAIL_CLOSED: non-finite loss")
     try:
         loss.backward()
     except RuntimeError as error:
@@ -248,7 +250,12 @@ def one_batch_step(
                 "do not enable fallback or warn_only"
             ) from error
         raise
+    trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
+    if any(parameter.grad is None or not torch.isfinite(parameter.grad).all() for parameter in trainable):
+        raise RuntimeError("FAIL_CLOSED: non-finite or missing trainable gradient")
     optimizer.step()
+    if any(not torch.isfinite(parameter).all() for parameter in trainable):
+        raise RuntimeError("FAIL_CLOSED: non-finite target parameter after step")
     return {"detection_loss": float(detection_loss.detach().sum().cpu()), "consistency_loss": float(consistency.detach().cpu())}
 
 

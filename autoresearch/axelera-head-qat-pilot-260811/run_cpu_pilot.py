@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded deterministic CPU QAT pilot; intentionally refuses every non-CPU mode."""
 from __future__ import annotations
-import argparse, copy, hashlib, json, sys
+import argparse, copy, hashlib, json, math, sys
 from pathlib import Path
 import torch
 import numpy as np
@@ -15,7 +15,7 @@ def main() -> None:
     p.add_argument('--max-batches',type=int,required=True); p.add_argument('--epochs',type=int,required=True); p.add_argument('--checkpoint',type=Path,required=True)
     p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True); p.add_argument('--replay-smoke',action='store_true')
     a=p.parse_args()
-    if a.epochs != 1 or (not a.replay_smoke and a.max_batches != 126) or (a.replay_smoke and a.max_batches != 1) or a.fresh_output.exists() or not (a.lr>0 and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
+    if a.epochs != 1 or (not a.replay_smoke and a.max_batches != 126) or (a.replay_smoke and a.max_batches != 1) or a.fresh_output.exists() or not (math.isfinite(a.lr) and a.lr>0 and math.isfinite(a.consistency_weight) and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
     binding=json.loads((Path(__file__).parent/'curated-manifest.binding.json').read_text())
     if str(a.dataset_manifest)!=binding['manifest_path'] or a.dataset_manifest_sha256!=binding['sha256'] or sha256_file(a.dataset_manifest) != binding['sha256']: raise SystemExit('FAIL_CLOSED: committed curated binding mismatch')
     manifest=json.loads(a.dataset_manifest.read_text());
