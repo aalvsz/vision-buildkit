@@ -108,7 +108,10 @@ COCO_CATEGORY_IDS = (
     89,
     90,
 )
-EXPECTED_SOURCE_SHA256 = "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c"
+EXPECTED_SOURCE_PROFILES = {
+    "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c": "historical-opset20",
+    "d502815b0ebd8a97d8ea48ddf23278118555f08d66022abb5a804deb4158d960": "sdk-opset17-verified-equivalent",
+}
 EXPECTED_ANNOTATIONS_SHA256 = "f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c"
 EXPECTED_IMAGES = {
     6818: ("000000006818.jpg", "99479f61ef2931ea70e161db0859e8706c6e48f13e8cb0798959f52433b01b98"),
@@ -275,11 +278,12 @@ def parity(reference: list[dict[str, Any]], candidate: list[dict[str, Any]], ima
 
 def verify_frozen_inputs(
     source_path: Path, annotation_path: Path, annotation: dict[str, Any], threshold: float
-) -> list[int]:
+) -> tuple[list[int], str]:
     if threshold != 0.25:
         raise ValueError("the frozen screening threshold is exactly 0.25")
-    if sha256(source_path) != EXPECTED_SOURCE_SHA256:
-        raise ValueError("source ONNX does not match the frozen Axelera evidence model")
+    source_sha = sha256(source_path)
+    if source_sha not in EXPECTED_SOURCE_PROFILES:
+        raise ValueError("source ONNX does not match an accepted frozen Axelera model profile")
     if sha256(annotation_path) != EXPECTED_ANNOTATIONS_SHA256:
         raise ValueError("annotation file does not match the frozen ten-image subset")
     if len(annotation.get("images", [])) != 10 or len(annotation.get("annotations", [])) != 97:
@@ -293,7 +297,7 @@ def verify_frozen_inputs(
         image_path = annotation_path.parent / filename
         if image_path.is_symlink() or not image_path.is_file() or sha256(image_path) != expected_sha:
             raise ValueError(f"frozen image identity mismatch: {image_id}")
-    return sorted(observed)
+    return sorted(observed), EXPECTED_SOURCE_PROFILES[source_sha]
 
 
 def manifest_dependencies(manifest_path: Path, raw_manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -338,7 +342,7 @@ def main() -> None:
     dataset_path = args.dataset.resolve()
     annotation_path = dataset_path / "instances.json"
     annotation = json.loads(annotation_path.read_text())
-    image_ids = verify_frozen_inputs(source_path, annotation_path, annotation, args.threshold)
+    image_ids, source_profile = verify_frozen_inputs(source_path, annotation_path, annotation, args.threshold)
     raw_manifest = json.loads(manifest_path.read_text())
     dependencies = manifest_dependencies(manifest_path, raw_manifest)
     session = ort.InferenceSession(str(source_path), providers=["CPUExecutionProvider"])
@@ -371,7 +375,12 @@ def main() -> None:
     result = {
         "schema_version": 1,
         "evidence_kind": "axelera_cpu_quantized_simulator_screening",
-        "source": {"path": str(source_path), "sha256": sha256(source_path), "map50_95": source_map},
+        "source": {
+            "path": str(source_path),
+            "profile": source_profile,
+            "sha256": sha256(source_path),
+            "map50_95": source_map,
+        },
         "candidate": {
             "manifest": str(manifest_path),
             "manifest_sha256": sha256(manifest_path),

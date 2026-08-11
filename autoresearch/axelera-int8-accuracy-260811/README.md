@@ -12,6 +12,12 @@ the device.
 ## Frozen baseline
 
 - Source ONNX SHA-256: `82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c`
+- Current SDK opset-17 source SHA-256: `d502815b0ebd8a97d8ea48ddf23278118555f08d66022abb5a804deb4158d960`.
+  On the frozen ten images its raw `(1, 300, 6)` outputs are numerically
+  identical to the historical opset-20 graph (maximum absolute output delta
+  0.0; 57/57 detections, IoU 1.0, score delta 0.0). The current SDK rejects the
+  opset-20 graph at `Split` before calibration, so new candidates use the
+  verified-equivalent opset-17 graph.
 - Existing compiled kernel SHA-256: `29a4ff3816864925374acbf801cddc9174fcb2d4d6d6ed2e20ccf834716cb8d0`
 - Dataset: the frozen ten-image COCO validation subset used by the historical
   Axelera evidence.
@@ -31,7 +37,7 @@ scheme. This is a hypothesis, not a vendor-guaranteed behavior.
 ## Execution gates
 
 1. Reproduce the existing min-max failure using the vendor quantized-model CPU
-   simulator and the exact source ONNX.
+   simulator and an accepted, frozen source ONNX profile.
 2. Quantize one candidate at a time. First try histogram plus
    `single_asymmetric`; try hybrid plus `single_asymmetric` only after the first
    candidate has a terminal result.
@@ -40,4 +46,3 @@ scheme. This is a hypothesis, not a vendor-guaranteed behavior.
    the device.
 4. Do not stop or alter the active translation process. AIPU execution remains
    blocked while that process owns `/dev/metis-0:3:0`.
-
