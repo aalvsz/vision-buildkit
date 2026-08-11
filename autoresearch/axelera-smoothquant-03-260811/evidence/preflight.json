@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "candidate": "raw-output-minmax-smoothquant-03",
+  "timestamp": "2026-08-11T14:31:53Z",
+  "effective_smoothquant_coefficient": 0.3,
+  "compile_config_sha256": "e563f30c1c20511bc1ee7d82dd7853fd7103d38d4e1dc393af72733df4ff768f",
+  "compiler_config_toml_sha256": "872f4e6220c908457b0a243e4ac8c732915cdf00e4dc027c5620c1875f6b36fc",
+  "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+  "baseline_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+  "artifact_changed": false,
+  "screen_run": false,
+  "decision": "FAIL_NO_EFFECT",
+  "failure_gate": "quantized model artifact must differ from baseline",
+  "aipu_used": false
+}

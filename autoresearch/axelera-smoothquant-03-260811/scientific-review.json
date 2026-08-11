@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "review_id": "sr-smoothquant-03",
+  "reviewer_id": "axelera-scientific-review-sol-high",
+  "experiment_id": "e-smoothquant-03",
+  "candidate_id": "c-smoothquant-03",
+  "decision": "DISCARD",
+  "rationale": [
+    "The effective compile configuration retained smoothquant_coefficient exactly 0.3.",
+    "The generated quantized_model.pt is byte-identical to the raw-output-minmax baseline at SHA-256 98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110.",
+    "Skipping the simulator screen was correct because no new executable candidate existed."
+  ],
+  "causal_interpretation": "SmoothQuant 0.3 has no serialized effect for this raw YOLO26n graph under the SDK 1.7.0 min-max path. The evidence cannot distinguish an ineligible transformation, an inactive pass, or later algebraic collapse.",
+  "claim_limits": [
+    "No new quality metrics were produced; the TSV metric is inherited baseline context.",
+    "The result does not prove every SmoothQuant coefficient, SDK version, graph, or model is ineffective.",
+    "Metis was none, so there is no AIPU compilation, execution, accuracy, latency, or stability result.",
+    "The TSV keep status is protocol bookkeeping and not a scientific KEEP."
+  ],
+  "next": "Stop shallow PTQ configuration probes. The previously tested host-FP function route is blocked by Voyager function stripping, so the next viable phase is confidence-head QAT or an SDK-supported explicit Q-DQ structural redesign.",
+  "aipu_gate": "No AIPU work until a structurally changed simulator candidate passes frozen, reproduction, and held-out gates."
+}
