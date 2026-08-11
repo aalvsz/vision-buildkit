@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-08-11T11:24:32Z",
+  "status": "PLATEAU",
+  "goal": "Produce an Axelera INT8 artifact that passes the frozen raw-output accuracy and parity gates before AIPU execution.",
+  "ledger": {
+    "path": "ledger-final",
+    "baseline_integrity": "PASS",
+    "experiments": 2,
+    "plateau_limit": 2,
+    "plateau": true,
+    "incumbent": null,
+    "pending_experiments": 0
+  },
+  "completed_experiments": [
+    {
+      "candidate": "quantization_output_dtype=int32",
+      "decision": "DISCARD",
+      "reason": "SDK 1.7.0 reset the restricted field and produced the byte-identical baseline artifact."
+    },
+    {
+      "candidate": "remove_io_quantization=true",
+      "decision": "DISCARD",
+      "reason": "The SDK honored the field and changed the artifact SHA, but simulator predictions and all quality metrics were byte-identical to baseline."
+    }
+  ],
+  "frozen_best": {
+    "candidate": "raw-output-minmax",
+    "map50_95": 0.32440287457317163,
+    "coverage": 0.9655172413793104,
+    "max_score_delta": 0.448224812746048,
+    "class_mismatches": 1,
+    "gates_passed": 1,
+    "gates_total": 4,
+    "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110"
+  },
+  "targeted_host_fp_prototype": {
+    "local_onnx_parity": "PASS",
+    "max_abs_diff": 0.0,
+    "rewritten_model_sha256": "9ea23cd0d5c40f484ef4e0c25742722a6c02bd3f01e279386ba2111e53fd9aa7",
+    "graph_cleaner_preflight": "FAIL_CLOSED",
+    "blocker": "Voyager retained the six custom calls in host_0 but stripped all FunctionProto definitions.",
+    "quantization_run": false,
+    "aipu_used": false
+  },
+  "next_supported_candidate": {
+    "change": "smoothquant_coefficient=0.3",
+    "confidence": "LOW",
+    "reason": "It is an unrestricted EXPERT field that can alter activation and weight ranges, but SmoothQuant 0.5 has historical negative evidence.",
+    "required_gates": [
+      "Start a fresh reviewed research phase rather than bypassing the current plateau.",
+      "compile_config.json must retain smoothquant_coefficient=0.3.",
+      "quantized_model.pt SHA must differ from raw-output-minmax.",
+      "Candidate prediction SHA must differ from raw-output-minmax before metric interpretation.",
+      "Pass all frozen accuracy/parity gates, then pass independent reproduction and held-out evaluation before AIPU work."
+    ]
+  },
+  "claim_limit": "No new AIPU artifact, AIPU accuracy result, latency result, or deployment claim was produced in this phase."
+}
