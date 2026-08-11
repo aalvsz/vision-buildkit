@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "status": "HOST_QUANTIZE_PASS_SCREEN_NOT_RUN",
+  "candidate": "raw-output-minmax-head-qat-epoch",
+  "sealed_manifest_sha256": "45348a7f7599195745d7a5bd25b70417f7854ef5b1881a4f77450386a7f5d15a",
+  "host": "axe-ubuntu-125",
+  "sdk": {
+    "root": "/home/ubuntu/voyager-sdk",
+    "python": "/home/ubuntu/voyager-sdk/venv/bin/python",
+    "python_version": "3.12.3",
+    "git": "7e2672f",
+    "runtime": "1.7.0-1",
+    "firmware": "1.7.0"
+  },
+  "launch_failures_before_run": [
+    {"command": "./deploy.py ...", "exit": 127, "cause": "deploy.py shebang requested unavailable python"},
+    {"command": "python3 deploy.py --help", "exit": 1, "cause": "system interpreter missing tqdm"}
+  ],
+  "command": "/home/ubuntu/voyager-sdk/venv/bin/python ./deploy.py ax_models/cv_engine_experiments/raw-output-minmax-head-qat-epoch.yaml --model yolo26n-raw-output-minmax-head-qat-epoch --mode QUANTIZE --metis none --build-root experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch --data-root /home/ubuntu/voyager-sdk/data --num-cal-images 200 --default-representative-images --dump-core-model",
+  "exit_code": 0,
+  "metis": "none",
+  "staging": {
+    "yaml_sha256": "f1e136bbb0360f6a3645da7a429e310843b1e871bbf45441964c06238f1170db",
+    "toml_sha256": "c72260e6f653b18501b4d39888242f66a9deeb4b505488d6360dd289812b4476",
+    "onnx_sha256": "1b7c38d3da0003e94f5ba5ff13ab9de59b48c7c395c3fe208cfe8b829f09fc5b"
+  },
+  "build_root": "experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch",
+  "effective_config": {
+    "compiler_config_sha256": "981161605dd69ae4356bbe9b914311092f15b3cfce65eb8bab7ce50aeca5f1f0",
+    "compiler_toml_sha256": "c72260e6f653b18501b4d39888242f66a9deeb4b505488d6360dd289812b4476",
+    "quantization_scheme": "per_tensor_min_max",
+    "ignore_weight_buffers": false,
+    "metis": null
+  },
+  "artifacts": {
+    "quantized_model_pt_sha256": "d3f55bc8db137b687a049f87c3be0905ba297b3d91f938365d43e0b9faedb4fe",
+    "core_model_onnx_sha256": "c2279a35f7e890a51a5cfe1523640797b2299f5c2d72d421f840d3eb82233e63",
+    "postprocess_graph_sha256": "a2af1feff1159d2a6c8b678a61974ae205844bbd537ec8bc103e277284d5df52",
+    "quantized_manifest_sha256": "bdb83c0ba59e480793b48ea09512023218209e56b6ff79ee7d5528186c787949"
+  },
+  "baseline": {
+    "quantized_model_pt_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "different_from_baseline": true
+  },
+  "next_phase": "STOPPED_BEFORE_PREDICTION_SCREEN",
+  "non_claim": "Host-side Voyager quantization only; no CPU simulator prediction generation, metrics, compile, or AIPU execution."
+}

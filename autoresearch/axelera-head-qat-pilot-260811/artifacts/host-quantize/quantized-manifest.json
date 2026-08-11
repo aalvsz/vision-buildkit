@@ -1,0 +1,86 @@
+{
+  "quantized_model_file": "quantized_model.pt",
+  "input_shapes": [
+    [
+      1,
+      3,
+      640,
+      640
+    ]
+  ],
+  "input_dtypes": [
+    "float32"
+  ],
+  "output_shapes": [
+    [
+      1,
+      4,
+      80,
+      80
+    ],
+    [
+      1,
+      4,
+      40,
+      40
+    ],
+    [
+      1,
+      4,
+      20,
+      20
+    ],
+    [
+      1,
+      80,
+      80,
+      80
+    ],
+    [
+      1,
+      80,
+      40,
+      40
+    ],
+    [
+      1,
+      80,
+      20,
+      20
+    ]
+  ],
+  "output_dtypes": [
+    "float32",
+    "float32",
+    "float32",
+    "float32",
+    "float32",
+    "float32"
+  ],
+  "input_shapes_original": null,
+  "output_shapes_original": null,
+  "quantize_params": [],
+  "dequantize_params": [],
+  "input_names": null,
+  "model_lib_file": null,
+  "model_params_file": null,
+  "n_padded_ch_inputs": null,
+  "n_padded_ch_outputs": null,
+  "input_tensor_layout": null,
+  "preprocess_graph": null,
+  "postprocess_graph": "postprocess_graph.onnx",
+  "model_metadata": {
+    "compiler_config_source": {
+      "toml_file": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/raw-output-minmax-head-qat-epoch.toml",
+      "toml_source": "local",
+      "toml_source_path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/raw-output-minmax-head-qat-epoch.toml",
+      "toml_copied_to_manifest": true,
+      "toml_fields": [
+        "quantization_scheme",
+        "ignore_weight_buffers"
+      ],
+      "yaml_overrides": []
+    }
+  },
+  "manifest_version": "1.1"
+}
