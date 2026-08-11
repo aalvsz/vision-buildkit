@@ -10,6 +10,7 @@
     "yaml_sha256": "f1e136bbb0360f6a3645da7a429e310843b1e871bbf45441964c06238f1170db",
     "toml_sha256": "c72260e6f653b18501b4d39888242f66a9deeb4b505488d6360dd289812b4476",
     "transplant_proof_sha256": "3330964d9ad788eb1b43110fe146b781d957c37e6f0f0756b1de9e68ac7c262f",
+    "transplant_detector_parity_sha256": "9ad4d57f1ce2e343a2ab05756faa33124feea16a0390dc2ccdb703193d723501",
     "source_retention_sha256": "d82a7dda0d078df4a35ee4b7c66a8c82dd94b43e4414af17a21fc05cfe118217"
   },
   "non_claim": "Preparation only; no Voyager QUANTIZE, CPU simulator, or AIPU execution occurred."
