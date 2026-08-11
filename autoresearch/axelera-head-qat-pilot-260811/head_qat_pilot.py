@@ -28,6 +28,18 @@ INT8_QMIN, INT8_QMAX = -127, 127  # symmetric narrow-range INT8, no unused -128 
 CHECKPOINT_SHA256 = "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
 
 
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_pinned_yolo(checkpoint: Path, device: str = "cpu"):
+    """Fail closed before deserializing a checkpoint with unexpected bytes."""
+    if sha256_file(checkpoint) != CHECKPOINT_SHA256:
+        raise RuntimeError("FAIL_CLOSED: checkpoint SHA-256 does not match pinned yolo26n.pt")
+    from ultralytics import YOLO
+    return YOLO(checkpoint).model.to(device)
+
+
 def seed_everything(seed: int = 260811) -> None:
     random.seed(seed)
     np.random.seed(seed)
