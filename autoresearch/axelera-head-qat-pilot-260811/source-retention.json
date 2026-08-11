@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "status": "PASS_SOURCE_RETENTION_ONLY",
+  "candidate": {
+    "artifact": "artifacts/yolo26n-head-qat-epoch-260811.onnx",
+    "sha256": "2d311f23a069cda504edb79f44a7c7476a7fd60e582049f18cf654943327f787",
+    "output": "output0",
+    "shape": [1, 84, 8400],
+    "opset": 17,
+    "q_or_dq_nodes": 0
+  },
+  "source": {
+    "artifact": "../../yolo26n-raw.onnx",
+    "sha256": "db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9"
+  },
+  "checkpoint_sha256": "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef",
+  "decoder": {
+    "threshold": 0.25,
+    "box_format": "cxcywh",
+    "nms": "class-aware",
+    "nms_iou": 0.7,
+    "max_detections": 300
+  },
+  "sets": [
+    {
+      "name": "dev",
+      "images": 10,
+      "source_map50_95": 0.5886166167637172,
+      "candidate_map50_95": 0.5886166167637172,
+      "map_drop": 0.0,
+      "coverage": 1.0,
+      "max_score_delta": 0.0010310113430023193,
+      "class_mismatches": 0
+    },
+    {
+      "name": "heldout",
+      "images": 10,
+      "source_map50_95": 0.42130419164365407,
+      "candidate_map50_95": 0.42130419164365407,
+      "map_drop": 0.0,
+      "coverage": 1.0,
+      "max_score_delta": 0.0006105899810791016,
+      "class_mismatches": 0
+    },
+    {
+      "name": "regression",
+      "images": 10,
+      "source_map50_95": 0.23846115281857852,
+      "candidate_map50_95": 0.23846115281857852,
+      "map_drop": 0.0,
+      "coverage": 1.0,
+      "max_score_delta": 0.0011370480060577393,
+      "class_mismatches": 0
+    }
+  ],
+  "gates": {
+    "max_map_drop": 0.002,
+    "min_coverage": 0.98,
+    "max_score_delta": 0.1,
+    "max_class_mismatches": 0
+  },
+  "evidence_sha256": "eb783b60443ba3cdb7f7288b968208e164bc10aabbee90aca76f4871844a5441",
+  "non_claim": "This is FP source retention only; no Voyager INT8 or AIPU execution is included."
+}
