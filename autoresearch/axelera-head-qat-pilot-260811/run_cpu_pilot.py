@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded deterministic CPU QAT pilot; intentionally refuses every non-CPU mode."""
 from __future__ import annotations
-import argparse, copy, json, sys
+import argparse, copy, hashlib, json, sys
 from pathlib import Path
 import torch
 import numpy as np
@@ -13,16 +13,19 @@ from head_qat_pilot import (TARGETS, assert_state_only_targets_changed, export_p
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument('--device',required=True,choices=['cpu']); p.add_argument('--seed',type=int,required=True)
     p.add_argument('--max-batches',type=int,required=True); p.add_argument('--epochs',type=int,required=True); p.add_argument('--checkpoint',type=Path,required=True)
-    p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True)
+    p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True); p.add_argument('--replay-smoke',action='store_true')
     a=p.parse_args()
-    if a.epochs != 1 or a.max_batches < 1 or a.fresh_output.exists(): raise SystemExit('FAIL_CLOSED: epochs=1, max-batches>=1, and absent fresh output required')
+    if a.epochs != 1 or not 1 <= a.max_batches <= 126 or a.fresh_output.exists() or not (a.lr>0 and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
     if sha256_file(a.dataset_manifest) != a.dataset_manifest_sha256: raise SystemExit('FAIL_CLOSED: curated manifest SHA mismatch')
     manifest=json.loads(a.dataset_manifest.read_text());
-    if manifest.get('status') != 'accepted_curated_pairs': raise SystemExit('FAIL_CLOSED: immutable curated manifest required')
+    if manifest.get('status') != 'accepted_curated_pairs' or manifest.get('cardinality') != 126 or len(manifest.get('records',[])) != 252: raise SystemExit('FAIL_CLOSED: malformed curated manifest')
+    included=set(manifest.get('included_stems',[])); record_stems={x['stem'] for x in manifest['records']}
+    if len(included)!=126 or included != record_stems or not all(key in manifest for key in ('source_inventory','source_inventory_sha256','calibration_binding','regression_binding','eval_binding')): raise SystemExit('FAIL_CLOSED: incomplete provenance binding')
+    if hashlib.sha256(json.dumps(manifest['source_inventory'],sort_keys=True).encode()).hexdigest()!=manifest['source_inventory_sha256']: raise SystemExit('FAIL_CLOSED: source inventory digest')
     root=a.dataset_manifest.parent
     for record in manifest.get('records',[]):
         path=root/record['kind']/f"{record['stem']}.{'jpg' if record['kind']=='image' else 'txt'}"
-        if not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit(f'FAIL_CLOSED: curated file hash {path}')
+        if path.is_symlink() or not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit(f'FAIL_CLOSED: curated file hash {path}')
     seed_everything(a.seed); a.fresh_output.mkdir(parents=True)
     student=load_pinned_yolo(a.checkpoint,'cpu'); teacher=copy.deepcopy(student).cpu(); teacher_before=state_dict_hashes(teacher)
     install_head_fake_qat(student); trainable=freeze_except_targets(student); before=state_dict_hashes(student)
@@ -34,6 +37,10 @@ def main() -> None:
     candidates=[]
     for label in labels:
         rows=[line.split() for line in label.read_text().splitlines() if line.strip()]
+        for row in rows:
+            if len(row)!=5: raise SystemExit('FAIL_CLOSED: malformed YOLO row')
+            values=[float(x) for x in row]
+            if not all(np.isfinite(values)) or not (0<=values[0]<80) or not all(0<=x<=1 for x in values[1:]) or values[3]<=0 or values[4]<=0: raise SystemExit('FAIL_CLOSED: invalid YOLO row')
         if rows: candidates.append((label.stem, rows))
     bins=[None,None,None]
     for stem, rows in candidates:
@@ -51,10 +58,14 @@ def main() -> None:
             batch_idx.append(index); classes.append([float(row[0])]); boxes.append([float(x) for x in row[1:5]])
     batch={'img':torch.stack(images),'batch_idx':torch.tensor(batch_idx),'cls':torch.tensor(classes),'bboxes':torch.tensor(boxes)}
     losses=[]
+    # replay-smoke is one coverage batch; normal mode iterates ordered pairs once.
     for _ in range(a.max_batches): losses.append(one_batch_step(student,teacher,batch,optimizer,a.consistency_weight))
     changed=assert_state_only_targets_changed(before,student); expected={f'{t}.{x}' for t in TARGETS for x in ('weight','bias')}
     if not expected <= changed or state_dict_hashes(teacher) != teacher_before: raise SystemExit('FAIL_CLOSED: incomplete target mutation or teacher drift')
     from head_qat_pilot import strip_head_fake_qat
-    strip_head_fake_qat(student); onnx=a.fresh_output/'trained-plain.onnx'; export_plain_raw_onnx(student,onnx,torch.zeros((1,3,640,640)))
-    (a.fresh_output/'result.json').write_text(json.dumps({'losses':losses,'target_hashes':{k:v for k,v in parameter_hashes(student).items() if k in expected},'onnx_sha256':sha256_file(onnx),'manifest_sha256':sha256_file(a.dataset_manifest)},sort_keys=True,indent=2)+'\n')
+    strip_head_fake_qat(student); onnx_path=a.fresh_output/'trained-plain.onnx'; export_plain_raw_onnx(student,onnx_path,torch.zeros((1,3,640,640)))
+    import onnx, onnxruntime as ort
+    graph=onnx.load(onnx_path); onnx.checker.check_model(graph)
+    if [(x.domain,x.version) for x in graph.opset_import] != [('',17)] or graph.graph.output[0].name!='output0' or len(graph.functions) or any(n.op_type in {'QuantizeLinear','DequantizeLinear','QLinearConv'} for n in graph.graph.node): raise SystemExit('FAIL_CLOSED: ONNX gate')
+    (a.fresh_output/'result.json').write_text(json.dumps({'losses':losses,'target_hashes':{k:v for k,v in parameter_hashes(student).items() if k in expected},'onnx_sha256':sha256_file(onnx_path),'manifest_sha256':sha256_file(a.dataset_manifest)},sort_keys=True,indent=2)+'\n')
 if __name__=='__main__': main()
