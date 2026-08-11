@@ -1,0 +1,64 @@
+{
+  "candidate": {
+    "dependencies": [
+      {
+        "field": "quantized_model_file",
+        "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/quantized/quantized_model.pt",
+        "sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110"
+      },
+      {
+        "field": "postprocess_graph",
+        "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/quantized/postprocess_graph.onnx",
+        "sha256": "fec3cfd153a41bd75aa8e02079d8a9e1ee4445356c75e1f6ae4e8816f356b5a3"
+      }
+    ],
+    "manifest": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/yolo26n-raw-output-minmax-int32-output/quantized/manifest.json",
+    "manifest_sha256": "7ef149b356df335520e1bf1c96ee3abff72e4aaa72a017dfcac4b1c5f0b7b090",
+    "map50_95": 0.32440287457317163,
+    "map_drop": -0.04170409799221686
+  },
+  "dataset": {
+    "annotations": "/home/ubuntu/vision-buildkit/autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset/instances.json",
+    "images": 10,
+    "sha256": "f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c"
+  },
+  "decision": "FAIL",
+  "decoder": {
+    "box_format": "cxcywh",
+    "class_selection": "argmax",
+    "max_detections": 300,
+    "nms": "class-aware",
+    "nms_iou_threshold": 0.7
+  },
+  "evidence_kind": "axelera_cpu_quantized_simulator_raw_output_screening",
+  "gates": {
+    "class_mismatches": false,
+    "coverage": false,
+    "map_drop": true,
+    "max_score_delta": false
+  },
+  "non_claim": "Candidate execution used the Axelera CPU quantized-model simulator, not the Metis AIPU.",
+  "parity": {
+    "candidate_detections": 64,
+    "class_mismatches": 1,
+    "coverage": 0.9655172413793104,
+    "high_confidence_added": 2,
+    "high_confidence_lost": 0,
+    "matched": 56,
+    "max_score_delta": 0.448224812746048,
+    "mean_iou": 0.9514513642429009,
+    "mean_score_delta": 0.04609905289752143,
+    "min_iou": 0.8603291128423233,
+    "reference_detections": 58,
+    "unmatched_candidate": 8,
+    "unmatched_reference": 2
+  },
+  "schema_version": 1,
+  "source": {
+    "map50_95": 0.28269877658095477,
+    "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw.onnx",
+    "profile": "raw-opset17-end2end-false",
+    "sha256": "db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9"
+  },
+  "threshold": 0.25
+}

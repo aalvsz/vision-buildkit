@@ -1,0 +1,4 @@
+# metric_direction: lower_is_better
+iteration	timestamp	commit	metric	delta	guard	guard-metric	status	description
+0	2026-08-11T10:42:05Z	96cd401	0.448224812746048	0	frozen_gates_passed	1/4	baseline	raw-output-minmax CPU simulator baseline
+1	2026-08-11T10:42:05Z	80ead8a	0.448224812746048	0	artifact_changed	0	keep	SDK reset restricted INT32 output field; quantized model is byte-identical and all metrics are unchanged

@@ -1,0 +1,43 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "status": "COMPLETE",
+  "results_tsv": "int32-output-results.tsv",
+  "config": {
+    "goal": "Reduce Axelera raw-output YOLO26n INT8 confidence error by preserving the six graph-cleaner boundary tensors as INT32.",
+    "scope": "One-variable SDK 1.7.0 host quantization experiment; frozen ten-image COCO screen; no AIPU execution.",
+    "metric": "maximum matched-detection score delta",
+    "direction": "lower_is_better",
+    "verify": "Reviewed eval_quantized_raw.py screen at threshold 0.25 plus byte comparison of quantized_model.pt against raw-output-minmax."
+  },
+  "candidate": {
+    "id": "raw-output-minmax-int32-output",
+    "commit": "80ead8ad7fdb2608aec4350fc57b0113d021e97c",
+    "manifest_sha256": "05aeda64051d9d6b5e1ff88937ed35b66262c6cf13b73fd075dd71d859a417e3",
+    "requested_change": "quantization_output_dtype=int32",
+    "effective_change": "none"
+  },
+  "execution": {
+    "host": "axe-ubuntu-125",
+    "sdk": "1.7.0 git 7e2672f",
+    "metis": "none",
+    "calibration_images": 200,
+    "aipu_execution": false,
+    "terminal_log_evidence": "Resetting restricted field 'quantization_output_dtype' to default value: None"
+  },
+  "result": {
+    "decision": "NO_OP_FAIL",
+    "source_map50_95": 0.28269877658095477,
+    "candidate_map50_95": 0.32440287457317163,
+    "coverage": 0.9655172413793104,
+    "max_score_delta": 0.448224812746048,
+    "class_mismatches": 1,
+    "gates_passed": 1,
+    "gates_total": 4,
+    "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "baseline_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "compiler_log_sha256": "5815c4d587f3ef5fa6d0b0bd2cee9821bd7039b25a3a658172ac05e7136aed92"
+  },
+  "interpretation": "SDK 1.7.0 exposes the field in CompilerConfig but resets it for ordinary user TOML configuration. The candidate is byte-identical to the baseline core artifact and is discarded.",
+  "non_claim": "This phase contains no Metis AIPU compile, execution, quality, latency, or deployment result."
+}
