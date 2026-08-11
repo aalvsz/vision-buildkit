@@ -6,5 +6,11 @@
   "one_variable_change": "source ONNX weights only; YAML postprocess and TOML min-max settings match accepted raw-output-minmax.",
   "command_intent": "deploy.py ax_models/cv_engine_experiments/raw-output-minmax-head-qat-epoch.yaml --model yolo26n-raw-output-minmax-head-qat-epoch --mode QUANTIZE --metis none --build-root experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch --data-root /home/ubuntu/voyager-sdk/data --num-cal-images 200 --default-representative-images --dump-core-model",
   "preflight": ["source SHA equals bound SHA", "effective compiler config is per_tensor_min_max with ignore_weight_buffers=false", "quantized artifact SHA differs from raw-output-minmax baseline", "candidate predictions SHA differs before normal frozen screen"],
+  "local_artifacts": {
+    "yaml_sha256": "f1e136bbb0360f6a3645da7a429e310843b1e871bbf45441964c06238f1170db",
+    "toml_sha256": "c72260e6f653b18501b4d39888242f66a9deeb4b505488d6360dd289812b4476",
+    "transplant_proof_sha256": "3330964d9ad788eb1b43110fe146b781d957c37e6f0f0756b1de9e68ac7c262f",
+    "source_retention_sha256": "d82a7dda0d078df4a35ee4b7c66a8c82dd94b43e4414af17a21fc05cfe118217"
+  },
   "non_claim": "Preparation only; no Voyager QUANTIZE, CPU simulator, or AIPU execution occurred."
 }
