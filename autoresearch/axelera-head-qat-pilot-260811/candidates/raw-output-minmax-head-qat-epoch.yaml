@@ -15,7 +15,7 @@ models:
   yolo26n-raw-output-minmax-head-qat-epoch:
     class: AxONNXModel
     class_path: $AXELERA_FRAMEWORK/ax_models/base_onnx.py
-    weight_path: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-head-qat-epoch-260811.onnx
+    weight_path: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw-head-qat-transplanted-260811.onnx
     task_category: ObjectDetection
     input_tensor_layout: NCHW
     input_tensor_shape: [1, 3, 640, 640]
