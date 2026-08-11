@@ -46,20 +46,26 @@ def main() -> None:
     for stem, rows in candidates:
         area=float(rows[0][3])*float(rows[0][4]); index=0 if area<.02 else 1 if area<.15 else 2
         if bins[index] is None: bins[index]=(stem,rows)
-    selected=[x for x in bins if x is not None]
+    coverage=[x for x in bins if x is not None]
     for item in candidates:
-        if item not in selected: selected.append(item)
-        if len(selected)>=min(16,len(candidates)): break
-    images=[]; batch_idx=[]; classes=[]; boxes=[]
-    for index,(stem,rows) in enumerate(selected):
-        array=np.asarray(Image.open(root/'image'/f'{stem}.jpg').convert('RGB').resize((640,640)),dtype=np.float32).transpose(2,0,1)/255
-        images.append(torch.from_numpy(array))
-        for row in rows:
-            batch_idx.append(index); classes.append([float(row[0])]); boxes.append([float(x) for x in row[1:5]])
-    batch={'img':torch.stack(images),'batch_idx':torch.tensor(batch_idx),'cls':torch.tensor(classes),'bboxes':torch.tensor(boxes)}
+        if item not in coverage: coverage.append(item)
+        if len(coverage)>=min(16,len(candidates)): break
+    # Normal mode is a true epoch iterator: sorted pairs, each exactly once.
+    # Replay smoke intentionally uses the fixed multi-scale coverage batch.
+    selected_batches=[coverage] if a.replay_smoke else [[item] for item in candidates]
+    if not a.replay_smoke and a.max_batches > len(selected_batches): raise SystemExit('FAIL_CLOSED: max-batches exceeds 126-pair epoch')
+    def make_batch(selected):
+        images=[]; batch_idx=[]; classes=[]; boxes=[]
+        for index,(stem,rows) in enumerate(selected):
+            array=np.asarray(Image.open(root/'image'/f'{stem}.jpg').convert('RGB').resize((640,640)),dtype=np.float32).transpose(2,0,1)/255
+            images.append(torch.from_numpy(array))
+            for row in rows:
+                batch_idx.append(index); classes.append([float(row[0])]); boxes.append([float(x) for x in row[1:5]])
+        return {'img':torch.stack(images),'batch_idx':torch.tensor(batch_idx),'cls':torch.tensor(classes),'bboxes':torch.tensor(boxes)}
     losses=[]
-    # replay-smoke is one coverage batch; normal mode iterates ordered pairs once.
-    for _ in range(a.max_batches): losses.append(one_batch_step(student,teacher,batch,optimizer,a.consistency_weight))
+    seen=[]
+    for selected in selected_batches[:a.max_batches]:
+        seen.extend(stem for stem,_ in selected); losses.append(one_batch_step(student,teacher,make_batch(selected),optimizer,a.consistency_weight))
     changed=assert_state_only_targets_changed(before,student); expected={f'{t}.{x}' for t in TARGETS for x in ('weight','bias')}
     if not expected <= changed or state_dict_hashes(teacher) != teacher_before: raise SystemExit('FAIL_CLOSED: incomplete target mutation or teacher drift')
     from head_qat_pilot import strip_head_fake_qat
@@ -67,5 +73,5 @@ def main() -> None:
     import onnx, onnxruntime as ort
     graph=onnx.load(onnx_path); onnx.checker.check_model(graph)
     if [(x.domain,x.version) for x in graph.opset_import] != [('',17)] or graph.graph.output[0].name!='output0' or len(graph.functions) or any(n.op_type in {'QuantizeLinear','DequantizeLinear','QLinearConv'} for n in graph.graph.node): raise SystemExit('FAIL_CLOSED: ONNX gate')
-    (a.fresh_output/'result.json').write_text(json.dumps({'losses':losses,'target_hashes':{k:v for k,v in parameter_hashes(student).items() if k in expected},'onnx_sha256':sha256_file(onnx_path),'manifest_sha256':sha256_file(a.dataset_manifest)},sort_keys=True,indent=2)+'\n')
+    (a.fresh_output/'result.json').write_text(json.dumps({'losses':losses,'ordered_stems':seen,'epoch_cardinality':len(candidates),'target_hashes':{k:v for k,v in parameter_hashes(student).items() if k in expected},'onnx_sha256':sha256_file(onnx_path),'manifest_sha256':sha256_file(a.dataset_manifest)},sort_keys=True,indent=2)+'\n')
 if __name__=='__main__': main()

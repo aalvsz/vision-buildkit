@@ -30,6 +30,9 @@ def main() -> None:
     forbidden=set()
     if args.calibration_snapshot: forbidden|={x.strip() for x in args.calibration_snapshot.read_text().splitlines() if x.strip()}
     if args.regression_dir: forbidden|={x.name for x in args.regression_dir.glob('*.jpg')}
+    if args.training_manifest:
+        train=json.loads(args.training_manifest.read_text())
+        forbidden|={f"{stem}.jpg" for stem in train.get('included_stems',[])}
     if forbidden & (selected_names['dev']|selected_names['heldout']): raise RuntimeError('forbidden evaluation overlap')
     for split, ids in selected.items():
         subset={k:[x for x in source[k] if (x.get('image_id',x.get('id')) in ids)] for k in ('images','annotations')}; subset['categories']=source['categories']
