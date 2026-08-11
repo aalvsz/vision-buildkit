@@ -22,6 +22,11 @@ def main() -> None:
     included=set(manifest.get('included_stems',[])); record_stems={x['stem'] for x in manifest['records']}
     if len(included)!=126 or included != record_stems or not all(key in manifest for key in ('source_inventory','source_inventory_sha256','calibration_binding','regression_binding','eval_binding')): raise SystemExit('FAIL_CLOSED: incomplete provenance binding')
     if hashlib.sha256(json.dumps(manifest['source_inventory'],sort_keys=True).encode()).hexdigest()!=manifest['source_inventory_sha256']: raise SystemExit('FAIL_CLOSED: source inventory digest')
+    eval_binding=manifest['eval_binding']
+    if not eval_binding.get('files') or not eval_binding.get('root'): raise SystemExit('FAIL_CLOSED: missing eval binding')
+    for record in eval_binding['files']:
+        path=Path(eval_binding['root'])/record['path']
+        if path.is_symlink() or not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit('FAIL_CLOSED: sealed eval binding')
     root=a.dataset_manifest.parent
     expected_paths=set()
     for record in manifest.get('records',[]):

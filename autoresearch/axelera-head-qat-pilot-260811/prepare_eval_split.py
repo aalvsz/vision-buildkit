@@ -20,7 +20,10 @@ def ensure_annotations(path: Path, url: str | None, fetch: bool) -> None:
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument('--annotations',type=Path,required=True); p.add_argument('--output',type=Path,required=True)
     p.add_argument('--download-root',type=Path); p.add_argument('--official-url'); p.add_argument('--fetch',action='store_true'); p.add_argument('--training-manifest',type=Path); p.add_argument('--calibration-snapshot',type=Path); p.add_argument('--regression-dir',type=Path)
-    args=p.parse_args(); annotations=args.annotations if args.download_root is None else args.download_root / args.annotations.name
+    args=p.parse_args();
+    if not args.fetch or not args.official_url or args.output.exists(): raise RuntimeError('sealed artifact requires --fetch --official-url and a fresh output root')
+    if not (args.training_manifest and args.calibration_snapshot and args.regression_dir): raise RuntimeError('training/calibration/regression bindings required')
+    annotations=args.annotations if args.download_root is None else args.download_root / args.annotations.name
     ensure_annotations(annotations,args.official_url,args.fetch)
     source=json.loads(annotations.read_text()); eligible=sorted(i['id'] for i in source['images'] if i['id'] not in EXCLUDED and any(a['image_id']==i['id'] for a in source['annotations']))
     ranked=sorted(eligible,key=lambda i:hashlib.sha256(f'cv-engine-qat-eval-260811:{i}'.encode()).hexdigest())
@@ -38,10 +41,10 @@ def main() -> None:
         subset={k:[x for x in source[k] if (x.get('image_id',x.get('id')) in ids)] for k in ('images','annotations')}; subset['categories']=source['categories']
         (args.output/f'{split}.instances.json').write_text(json.dumps(subset,indent=2,sort_keys=True)+'\n')
         annotation=args.output/f'{split}.instances.json'; image_records=[]
-        if args.fetch:
-            if not args.official_url: raise RuntimeError('--fetch requires --official-url')
-            image_dir=args.output/split/'images';image_dir.mkdir(parents=True,exist_ok=True)
-            for ident in ids:
-                target=image_dir/f'{ident:012d}.jpg'; urllib.request.urlretrieve(args.official_url.rstrip('/')+'/'+target.name,target); image_records.append({'name':target.name,'sha256':digest(target)})
-        (args.output/f'{split}.manifest.json').write_text(json.dumps({'source_sha256':SOURCE_SHA256,'excluded_ids':sorted(EXCLUDED),'ids':ids,'annotation_sha256':digest(annotation),'image_count':len(image_records),'images':image_records},indent=2,sort_keys=True)+'\n')
+        image_dir=args.output/split/'images';image_dir.mkdir(parents=True,exist_ok=True)
+        for ident in ids:
+            target=image_dir/f'{ident:012d}.jpg'; urllib.request.urlretrieve(args.official_url.rstrip('/')+'/'+target.name,target); image_records.append({'name':target.name,'sha256':digest(target)})
+        if len(image_records)!=10: raise RuntimeError('sealed split requires ten images')
+        regression_inventory=[{'name':x.name,'sha256':digest(x)} for x in sorted(args.regression_dir.glob('*.jpg'))]
+        (args.output/f'{split}.manifest.json').write_text(json.dumps({'source_sha256':SOURCE_SHA256,'excluded_ids':sorted(EXCLUDED),'ids':ids,'annotation_sha256':digest(annotation),'image_count':len(image_records),'images':image_records,'training_manifest_sha256':digest(args.training_manifest),'calibration_snapshot_sha256':digest(args.calibration_snapshot),'regression_inventory_sha256':hashlib.sha256(json.dumps(regression_inventory,sort_keys=True).encode()).hexdigest(),'fetch_url':args.official_url,'generator_commit':'cce91a04bbf40bf6765770edc41ee3dddde58aff'},indent=2,sort_keys=True)+'\n')
 if __name__=='__main__': main()
