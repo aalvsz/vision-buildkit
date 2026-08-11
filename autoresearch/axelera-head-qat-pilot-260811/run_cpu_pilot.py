@@ -15,7 +15,7 @@ def main() -> None:
     p.add_argument('--max-batches',type=int,required=True); p.add_argument('--epochs',type=int,required=True); p.add_argument('--checkpoint',type=Path,required=True)
     p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True); p.add_argument('--replay-smoke',action='store_true')
     a=p.parse_args()
-    if a.epochs != 1 or not 1 <= a.max_batches <= 126 or a.fresh_output.exists() or not (a.lr>0 and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
+    if a.epochs != 1 or (not a.replay_smoke and a.max_batches != 126) or (a.replay_smoke and a.max_batches != 1) or a.fresh_output.exists() or not (a.lr>0 and a.consistency_weight>0): raise SystemExit('FAIL_CLOSED: invalid bounded numeric arguments')
     if sha256_file(a.dataset_manifest) != a.dataset_manifest_sha256: raise SystemExit('FAIL_CLOSED: curated manifest SHA mismatch')
     manifest=json.loads(a.dataset_manifest.read_text());
     if manifest.get('status') != 'accepted_curated_pairs' or manifest.get('cardinality') != 126 or len(manifest.get('records',[])) != 252: raise SystemExit('FAIL_CLOSED: malformed curated manifest')
@@ -23,9 +23,13 @@ def main() -> None:
     if len(included)!=126 or included != record_stems or not all(key in manifest for key in ('source_inventory','source_inventory_sha256','calibration_binding','regression_binding','eval_binding')): raise SystemExit('FAIL_CLOSED: incomplete provenance binding')
     if hashlib.sha256(json.dumps(manifest['source_inventory'],sort_keys=True).encode()).hexdigest()!=manifest['source_inventory_sha256']: raise SystemExit('FAIL_CLOSED: source inventory digest')
     root=a.dataset_manifest.parent
+    expected_paths=set()
     for record in manifest.get('records',[]):
         path=root/record['kind']/f"{record['stem']}.{'jpg' if record['kind']=='image' else 'txt'}"
+        expected_paths.add(path)
         if path.is_symlink() or not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit(f'FAIL_CLOSED: curated file hash {path}')
+    actual_paths=set((root/'image').glob('*.jpg'))|set((root/'label').glob('*.txt'))
+    if actual_paths != expected_paths: raise SystemExit('FAIL_CLOSED: curated corpus extras or omissions')
     seed_everything(a.seed); a.fresh_output.mkdir(parents=True)
     student=load_pinned_yolo(a.checkpoint,'cpu'); teacher=copy.deepcopy(student).cpu(); teacher_before=state_dict_hashes(teacher)
     install_head_fake_qat(student); trainable=freeze_except_targets(student); before=state_dict_hashes(student)
@@ -66,6 +70,7 @@ def main() -> None:
     seen=[]
     for selected in selected_batches[:a.max_batches]:
         seen.extend(stem for stem,_ in selected); losses.append(one_batch_step(student,teacher,make_batch(selected),optimizer,a.consistency_weight))
+    if not a.replay_smoke and (seen != sorted(included) or len(seen)!=126 or len(set(seen))!=126): raise SystemExit('FAIL_CLOSED: incomplete epoch iterator')
     changed=assert_state_only_targets_changed(before,student); expected={f'{t}.{x}' for t in TARGETS for x in ('weight','bias')}
     if not expected <= changed or state_dict_hashes(teacher) != teacher_before: raise SystemExit('FAIL_CLOSED: incomplete target mutation or teacher drift')
     from head_qat_pilot import strip_head_fake_qat
