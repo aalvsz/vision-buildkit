@@ -13,11 +13,16 @@ from head_qat_pilot import (TARGETS, assert_state_only_targets_changed, export_p
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument('--device',required=True,choices=['cpu']); p.add_argument('--seed',type=int,required=True)
     p.add_argument('--max-batches',type=int,required=True); p.add_argument('--epochs',type=int,required=True); p.add_argument('--checkpoint',type=Path,required=True)
-    p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True)
+    p.add_argument('--dataset-manifest',type=Path,required=True); p.add_argument('--dataset-manifest-sha256',required=True); p.add_argument('--fresh-output',type=Path,required=True); p.add_argument('--lr',type=float,required=True); p.add_argument('--consistency-weight',type=float,required=True)
     a=p.parse_args()
     if a.epochs != 1 or a.max_batches < 1 or a.fresh_output.exists(): raise SystemExit('FAIL_CLOSED: epochs=1, max-batches>=1, and absent fresh output required')
+    if sha256_file(a.dataset_manifest) != a.dataset_manifest_sha256: raise SystemExit('FAIL_CLOSED: curated manifest SHA mismatch')
     manifest=json.loads(a.dataset_manifest.read_text());
     if manifest.get('status') != 'accepted_curated_pairs': raise SystemExit('FAIL_CLOSED: immutable curated manifest required')
+    root=a.dataset_manifest.parent
+    for record in manifest.get('records',[]):
+        path=root/record['kind']/f"{record['stem']}.{'jpg' if record['kind']=='image' else 'txt'}"
+        if not path.is_file() or sha256_file(path)!=record['sha256']: raise SystemExit(f'FAIL_CLOSED: curated file hash {path}')
     seed_everything(a.seed); a.fresh_output.mkdir(parents=True)
     student=load_pinned_yolo(a.checkpoint,'cpu'); teacher=copy.deepcopy(student).cpu(); teacher_before=state_dict_hashes(teacher)
     install_head_fake_qat(student); trainable=freeze_except_targets(student); before=state_dict_hashes(student)
@@ -25,7 +30,7 @@ def main() -> None:
     if {id(x) for g in optimizer.param_groups for x in g['params']} != {id(x) for x in student.parameters() if x.requires_grad}: raise SystemExit('FAIL_CLOSED: optimizer membership')
     # Deterministic, worker-free curated batch. Choose pairs covering small,
     # medium and large normalized boxes, then fill in sorted stem order.
-    root=a.dataset_manifest.parent; labels=sorted((root/'label').glob('*.txt'))
+    labels=sorted((root/'label').glob('*.txt'))
     candidates=[]
     for label in labels:
         rows=[line.split() for line in label.read_text().splitlines() if line.strip()]

@@ -16,6 +16,8 @@ def main():
  for stem in common:
   for src,kind in ((I[stem],'image'),(L[stem],'label')):
    dst=a.output/kind/src.name;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,dst);records.append({'stem':stem,'kind':kind,'sha256':h(dst)})
- manifest={'status':'accepted_curated_pairs','rule':'sorted exact image-label stem intersection','cardinality':len(common),'excluded':EXCLUDED,'records':records,'calibration_sha256':h(a.calibration),'regression_ids':sorted(reg),'eval_ids':sorted(ev)}
+ inventory=[]
+ for path in sorted([*im.glob('*.jpg'),*la.glob('*.txt')]): inventory.append({'path':str(path.relative_to(a.source)),'sha256':h(path)})
+ manifest={'status':'accepted_curated_pairs','source_root':str(a.source),'source_inventory_sha256':hashlib.sha256(json.dumps(inventory,sort_keys=True).encode()).hexdigest(),'source_inventory':inventory,'rule':'sorted exact image-label stem intersection','cardinality':len(common),'included_stems':common,'excluded':EXCLUDED,'records':records,'calibration_binding':{'path':str(a.calibration),'sha256':h(a.calibration),'names':sorted(cal)},'regression_binding':{'root':str(a.regression),'files':[{ 'name':x.name,'sha256':h(x)} for x in sorted(a.regression.glob('*.jpg'))]},'eval_binding':{'root':str(a.eval_dir),'files':[{ 'name':x.name,'sha256':h(x)} for x in sorted(a.eval_dir.glob('*.jpg'))]}}
  (a.output/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
 if __name__=='__main__':main()
