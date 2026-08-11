@@ -14,7 +14,7 @@ def main():
  p=argparse.ArgumentParser();p.add_argument('--manifest',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
  a.manifest=a.manifest.resolve();a.output=a.output.resolve()
  if a.output.exists() or not a.manifest.is_file() or sha(a.manifest)!=EXPECTED_MANIFEST_SHA256: raise SystemExit('FAIL_CLOSED: sealed manifest receipt')
- payload=json.loads(a.manifest.read_text()); model_path=(a.manifest.parent/payload['model_path']).resolve() if 'model_path' in payload else None
+ payload=json.loads(a.manifest.read_text()); model_path=(a.manifest.parent/payload['quantized_model_file']).resolve() if 'quantized_model_file' in payload else None
  if model_path is None or not model_path.is_file() or sha(model_path)!=EXPECTED_QUANTIZED_MODEL_SHA256: raise SystemExit('FAIL_CLOSED: sealed quantized model receipt')
  from axelera.compiler.quantized_model import AxeleraQuantizedModel
  from axelera.types.manifest import Manifest
@@ -32,11 +32,14 @@ def main():
    values=np.asarray(value).reshape(-1) if hasattr(value,'__array__') else [value]
    if not all(math.isfinite(float(x)) for x in values) or ('scale' in key and not all(float(x)>0 for x in values)): raise SystemExit(f'FAIL_CLOSED: invalid qparam {name}:{key}')
   branch=name.split('.')[2][-1]; index=name.split('.')[3]
-  qre_prefix=f'model_dot_23_cv{branch}_dot_{index}_'
-  qre=[key for key in modules if key.lower().startswith(qre_prefix) and 'conv_to_output_qre' in key.lower()]
-  if len(qre)!=1: raise SystemExit(f'FAIL_CLOSED: expected one output qre for {name}')
-  qre_module=modules[qre[0]]; qre_fields={key:getattr(qre_module,key,None) for key in ('scale','zero_point','output_scale','output_zero_point')}
+  qre_name=f'model_dot_23_cv{branch}_dot_{index}_cv{branch}_dot_{index}_dot_2_conv_to_output_qre'
+  if qre_name not in modules: raise SystemExit(f'FAIL_CLOSED: expected exact output qre for {name}')
+  qre_module=modules[qre_name]; qre_fields={key:getattr(qre_module,key,None) for key in ('scale','zero_point','output_scale','output_zero_point')}
   if not any(value is not None for value in qre_fields.values()): raise SystemExit(f'FAIL_CLOSED: missing QRE qparams {name}')
-  rows.append({'name':name,'encoded_module':encoded,'output_qre_module':qre[0],'output_qre_qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in qre_fields.items()},'qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in fields.items()}})
+  for key,value in qre_fields.items():
+   if value is not None:
+    values=np.asarray(value).reshape(-1) if hasattr(value,'__array__') else [value]
+    if not all(math.isfinite(float(x)) for x in values) or ('scale' in key and not all(float(x)>0 for x in values)): raise SystemExit(f'FAIL_CLOSED: invalid QRE qparam {name}:{key}')
+  rows.append({'name':name,'encoded_module':encoded,'output_qre_module':qre_name,'output_qre_qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in qre_fields.items()},'qparams':{key:(value.tolist() if hasattr(value,'tolist') else value) for key,value in fields.items()}})
  a.output.write_text(json.dumps({'manifest_sha256':sha(a.manifest),'targets':rows},indent=2,sort_keys=True)+'\n')
 if __name__=='__main__': main()
