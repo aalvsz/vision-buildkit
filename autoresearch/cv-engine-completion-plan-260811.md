@@ -29,16 +29,15 @@ the MVP, so adopting QAT is a deliberate scope expansion.
    confidence head out of INT8 initially, then reduce the high-precision scope
    only if gates remain satisfied. Build as a strongly typed TensorRT network
    and verify coverage `>=0.98` and max score delta `<=0.12` before benchmarking.
-3. **Axelera INT8.** Keep only the raw-output research branch. It improved the
-   CPU-simulator mAP (`0.296` to `0.324`) and coverage (`0.860` to `0.966`) but
-   still failed three gates. First prove external-decoder equivalence; the
-   current candidate has only 19 unique scores across 64 detections, so its mAP
-   gain is not yet evidence of faithful recovery. Repeat with another
-   calibration seed and a disjoint set, then perform confidence-head layer
-   sensitivity. Try a newer SDK/compiler and verify explicit Q/DQ import
-   before funding QAT. Do not use
-   an AIPU window until the candidate improves both screens and PID 1603 has
-   released `/dev/metis-0:3:0`.
+3. **Axelera INT8.** Keep the raw-output research branch and retain the
+   compiler-matched head-QAT negative result. The candidate improved CPU-screen
+   mAP (`0.296` to `0.324`) but still failed coverage, class parity, and score
+   drift. A direct public-schema audit of Voyager SDK 1.7 confirms that the
+   graph cleaner can split only on MatMul, Gemm, or Clip; it cannot exclude the
+   six terminal Detect Convs or redefine their outputs. Do not fund another
+   blind QAT sweep or an AIPU window under SDK 1.7. Re-open this path only when
+   a vendor-supported terminal-head exclusion feature or a newer SDK is
+   available, then require a frozen and held-out CPU screen before device use.
 4. **Evidence promotion.** Any passing ten-image result must then run full COCO
    val2017, bind the exact artifact/runtime/harness, and receive independent
    review. Ten-image results remain parity screens, not accuracy claims.

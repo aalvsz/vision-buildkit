@@ -71,3 +71,4 @@ with full artifact digests, binding, metrics, and recomputed gates.
 | `rtdetr-l-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
 | `rfdetr-base-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
 | `libreyolo9s-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
+| `yolo26n-axelera-sdk-17-capability.json` | 1 (legacy) | Public-schema capability limitation; no terminal-head exclusion hook |

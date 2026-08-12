@@ -5,27 +5,28 @@ This module intentionally does not invoke a trainer.  ``one_batch_step`` is the
 only optimisation primitive: callers must supply a normal Ultralytics batch and
 must opt in to any multi-batch schedule outside this bounded pilot.
 """
+
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
-import random
 import os
+import random
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-TARGETS = tuple(
-    [f"model.23.cv2.{index}.2" for index in range(3)]
-    + [f"model.23.cv3.{index}.2" for index in range(3)]
-)
+TARGETS = tuple([f"model.23.cv2.{index}.2" for index in range(3)] + [f"model.23.cv3.{index}.2" for index in range(3)])
 INT8_QMIN, INT8_QMAX = -127, 127  # symmetric narrow-range INT8, no unused -128 bin
 CHECKPOINT_SHA256 = "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef"
+VOYAGER_QPARAMS_PATH = (
+    Path(__file__).resolve().parents[1] / "axelera-head-qat-qparam-surrogate-260812" / "artifacts" / "qparams.json"
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -37,6 +38,7 @@ def load_pinned_yolo(checkpoint: Path, device: str = "cpu"):
     if sha256_file(checkpoint) != CHECKPOINT_SHA256:
         raise RuntimeError("FAIL_CLOSED: checkpoint SHA-256 does not match pinned yolo26n.pt")
     from ultralytics import YOLO
+
     return YOLO(checkpoint).model.to(device)
 
 
@@ -69,8 +71,14 @@ class STEQATConv2d(nn.Conv2d):
 
     def __init__(self, source: nn.Conv2d) -> None:
         super().__init__(
-            source.in_channels, source.out_channels, source.kernel_size, source.stride,
-            source.padding, source.dilation, source.groups, source.bias is not None,
+            source.in_channels,
+            source.out_channels,
+            source.kernel_size,
+            source.stride,
+            source.padding,
+            source.dilation,
+            source.groups,
+            source.bias is not None,
             source.padding_mode,
         )
         with torch.no_grad():
@@ -82,9 +90,262 @@ class STEQATConv2d(nn.Conv2d):
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         self.fake_quant_calls.add_(1)
         return F.conv2d(
-            symmetric_int8_ste(value), symmetric_int8_ste(self.weight), self.bias,
-            self.stride, self.padding, self.dilation, self.groups,
+            symmetric_int8_ste(value),
+            symmetric_int8_ste(self.weight),
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
         )
+
+
+def _affine_fake_quant(value: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor) -> torch.Tensor:
+    """Voyager-style affine int8 quantize/dequantize with a straight-through gradient."""
+    scale = scale.to(device=value.device, dtype=value.dtype)
+    zero_point = zero_point.to(device=value.device, dtype=value.dtype)
+    quantized = torch.round(value / scale + zero_point).clamp(-128, 127)
+    dequantized = (quantized - zero_point) * scale
+    return value + (dequantized - value).detach()
+
+
+def _voyager_output_qre(
+    accumulator: torch.Tensor,
+    accumulator_scale: torch.Tensor,
+    accumulator_zero_point: torch.Tensor,
+    qre_scale: torch.Tensor,
+    qre_zero_point: torch.Tensor,
+) -> torch.Tensor:
+    """Apply Voyager's per-channel accumulator dequantization and output QRE."""
+    scale = accumulator_scale.to(device=accumulator.device, dtype=accumulator.dtype)
+    zero_point = accumulator_zero_point.to(device=accumulator.device, dtype=accumulator.dtype)
+    real_value = (accumulator - zero_point[None, :, None, None]) * scale[None, :, None, None]
+    return _affine_fake_quant(real_value, qre_scale, qre_zero_point)
+
+
+class _VoyagerIntegerQuantize(torch.autograd.Function):
+    """Exact Voyager integer quantization with an explicit STE backward.
+
+    Voyager represents affine-quantized values as integer-valued float tensors
+    inside QConv.  This function keeps that deployed forward (round then
+    clamp) while making the training approximation explicit and testable.
+    ``gradient_mode=0`` is the historical identity STE; ``gradient_mode=1``
+    uses a bounded, non-dead-end surrogate for saturated values.
+    """
+
+    @staticmethod
+    def forward(
+        ctx, value: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor, gradient_mode: int
+    ) -> torch.Tensor:
+        scale = scale.to(device=value.device, dtype=value.dtype)
+        zero_point = zero_point.to(device=value.device, dtype=value.dtype)
+        raw = value / scale + zero_point
+        quantized = torch.round(raw).clamp(-128, 127)
+        ctx.save_for_backward(raw)
+        ctx.gradient_mode = int(gradient_mode)
+        return quantized
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (raw,) = ctx.saved_tensors
+        if ctx.gradient_mode == 0:
+            derivative = torch.ones_like(raw)
+        elif ctx.gradient_mode == 1:
+            distance = torch.where(
+                raw < -128,
+                -128 - raw,
+                torch.where(raw > 127, raw - 127, torch.zeros_like(raw)),
+            )
+            # Unit slope in range; bounded, nonzero slope when saturated.
+            derivative = torch.clamp(1.0 / (1.0 + distance), min=0.05, max=1.0)
+        else:  # pragma: no cover - private wrapper guards this
+            raise RuntimeError(f"unsupported Voyager integer gradient mode: {ctx.gradient_mode}")
+        return grad_output * derivative, None, None, None
+
+
+def _affine_quant_integer_ste(value: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor) -> torch.Tensor:
+    """Exact integer-domain affine quantization with identity STE backward."""
+    return _VoyagerIntegerQuantize.apply(value, scale, zero_point, 0)
+
+
+def _affine_quant_integer_bounded_ste(
+    value: torch.Tensor, scale: torch.Tensor, zero_point: torch.Tensor
+) -> torch.Tensor:
+    """Exact integer forward with a bounded, non-dead-end STE derivative."""
+    return _VoyagerIntegerQuantize.apply(value, scale, zero_point, 1)
+
+
+def _round_float18_ste(value: torch.Tensor) -> torch.Tensor:
+    """Approximate qtools_cpp_ext.round_float18 with an STE forward boundary."""
+    magnitude = value.detach().abs().clamp_min(torch.finfo(value.dtype).tiny)
+    exponent = torch.floor(torch.log2(magnitude))
+    step = torch.pow(torch.tensor(2.0, device=value.device, dtype=value.dtype), exponent - 12.0)
+    rounded = torch.round(value / step) * step
+    return value + (rounded - value).detach()
+
+
+class VoyagerSTEQATConv2d(nn.Conv2d):
+    """Terminal Conv fake-QAT matched to extracted Voyager affine qparams.
+
+    Voyager uses asymmetric per-tensor activation qparams, per-output-channel
+    symmetric weight qparams, and a separate per-tensor output re-quantizer.
+    Keeping those three boundaries in the training graph is materially closer
+    to the compiled QConv2d than the original symmetric input/weight-only pilot.
+    """
+
+    def __init__(self, source: nn.Conv2d, qparams: dict[str, list[float]]) -> None:
+        super().__init__(
+            source.in_channels,
+            source.out_channels,
+            source.kernel_size,
+            source.stride,
+            source.padding,
+            source.dilation,
+            source.groups,
+            source.bias is not None,
+            source.padding_mode,
+        )
+        with torch.no_grad():
+            self.weight.copy_(source.weight)
+            if source.bias is not None and self.bias is not None:
+                self.bias.copy_(source.bias)
+        self.register_buffer("input_scale_qat", torch.tensor(qparams["input_scale"], dtype=torch.float32))
+        self.register_buffer("input_zero_point_qat", torch.tensor(qparams["input_zero_point"], dtype=torch.float32))
+        self.register_buffer("weight_scale_qat", torch.tensor(qparams["weight_scale"], dtype=torch.float32))
+        self.register_buffer("weight_zero_point_qat", torch.tensor(qparams["weight_zero_point"], dtype=torch.float32))
+        self.register_buffer(
+            "accumulator_scale_qat",
+            torch.tensor(qparams.get("output_scale", [1.0]), dtype=torch.float32),
+        )
+        self.register_buffer(
+            "accumulator_zero_point_qat",
+            torch.tensor(qparams.get("output_zero_point", [0.0]), dtype=torch.float32),
+        )
+        self.register_buffer("output_scale_qat", torch.tensor(qparams["output_qre_scale"], dtype=torch.float32))
+        self.register_buffer(
+            "output_zero_point_qat",
+            torch.tensor(qparams["output_qre_zero_point"], dtype=torch.float32),
+        )
+        self.register_buffer("fake_quant_calls", torch.zeros((), dtype=torch.int64), persistent=True)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        self.fake_quant_calls.add_(1)
+        activation = _affine_fake_quant(value, self.input_scale_qat, self.input_zero_point_qat)
+        weight = _affine_fake_quant(
+            self.weight,
+            self.weight_scale_qat[:, None, None, None],
+            self.weight_zero_point_qat[:, None, None, None],
+        )
+        output = F.conv2d(activation, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        return _affine_fake_quant(output, self.output_scale_qat, self.output_zero_point_qat)
+
+
+class VoyagerIntegerSTEQATConv2d(nn.Conv2d):
+    """Straight-through emulation of Voyager's deployed integer QConv path."""
+
+    def __init__(self, source: nn.Conv2d, qparams: dict[str, list[float]]) -> None:
+        super().__init__(
+            source.in_channels,
+            source.out_channels,
+            source.kernel_size,
+            source.stride,
+            source.padding,
+            source.dilation,
+            source.groups,
+            source.bias is not None,
+            source.padding_mode,
+        )
+        with torch.no_grad():
+            self.weight.copy_(source.weight)
+            if source.bias is not None and self.bias is not None:
+                self.bias.copy_(source.bias)
+        self.register_buffer("input_scale_qat", torch.tensor(qparams["input_scale"], dtype=torch.float32))
+        self.register_buffer("input_zero_point_qat", torch.tensor(qparams["input_zero_point"], dtype=torch.float32))
+        self.register_buffer("weight_scale_qat", torch.tensor(qparams["weight_scale"], dtype=torch.float32))
+        self.register_buffer("weight_zero_point_qat", torch.tensor(qparams["weight_zero_point"], dtype=torch.float32))
+        self.register_buffer(
+            "accumulator_scale_qat",
+            torch.tensor(qparams.get("output_scale", [1.0]), dtype=torch.float32),
+        )
+        self.register_buffer(
+            "accumulator_zero_point_qat",
+            torch.tensor(qparams.get("output_zero_point", [0.0]), dtype=torch.float32),
+        )
+        self.register_buffer("output_scale_qat", torch.tensor(qparams["output_qre_scale"], dtype=torch.float32))
+        self.register_buffer(
+            "output_zero_point_qat",
+            torch.tensor(qparams["output_qre_zero_point"], dtype=torch.float32),
+        )
+        self.register_buffer("fake_quant_calls", torch.zeros((), dtype=torch.int64), persistent=True)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        self.fake_quant_calls.add_(1)
+        activation = _affine_quant_integer_ste(value, self.input_scale_qat, self.input_zero_point_qat)
+        weight = _affine_quant_integer_ste(
+            self.weight,
+            self.weight_scale_qat[:, None, None, None],
+            self.weight_zero_point_qat[:, None, None, None],
+        )
+        # Voyager stores bias in the accumulator domain.  The compiler's
+        # baseline uses the source bias divided by input*weight scale and
+        # rounds to its accumulator precision.
+        bias_scale = self.input_scale_qat * self.weight_scale_qat
+        bias_integer = torch.round(self.bias / bias_scale)
+        bias_integer = self.bias + (bias_integer - self.bias).detach()
+        accumulator = F.conv2d(activation, weight, None, self.stride, self.padding, self.dilation, self.groups)
+        accumulator = _round_float18_ste(accumulator + bias_integer[None, :, None, None])
+        # The compiled output QRE consumes the real accumulator after applying
+        # input*weight scale; preserving that factor keeps detector logits in
+        # the deployed domain.
+        return _voyager_output_qre(
+            accumulator,
+            self.accumulator_scale_qat,
+            self.accumulator_zero_point_qat,
+            self.output_scale_qat,
+            self.output_zero_point_qat,
+        )
+
+
+class VoyagerIntegerClippedSTEQATConv2d(VoyagerIntegerSTEQATConv2d):
+    """Same integer forward with a bounded derivative at saturated bins."""
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        self.fake_quant_calls.add_(1)
+        activation = _affine_quant_integer_bounded_ste(value, self.input_scale_qat, self.input_zero_point_qat)
+        weight = _affine_quant_integer_bounded_ste(
+            self.weight,
+            self.weight_scale_qat[:, None, None, None],
+            self.weight_zero_point_qat[:, None, None, None],
+        )
+        bias_scale = self.input_scale_qat * self.weight_scale_qat
+        bias_integer = torch.round(self.bias / bias_scale)
+        bias_integer = self.bias + (bias_integer - self.bias).detach()
+        accumulator = F.conv2d(activation, weight, None, self.stride, self.padding, self.dilation, self.groups)
+        accumulator = _round_float18_ste(accumulator + bias_integer[None, :, None, None])
+        return _voyager_output_qre(
+            accumulator,
+            self.accumulator_scale_qat,
+            self.accumulator_zero_point_qat,
+            self.output_scale_qat,
+            self.output_zero_point_qat,
+        )
+
+
+def load_voyager_qparams(path: Path = VOYAGER_QPARAMS_PATH) -> dict[str, dict[str, list[float]]]:
+    payload = json.loads(path.read_text())
+    rows = {}
+    for target in payload["targets"]:
+        q = target["qparams"]
+        qre = target["output_qre_qparams"]
+        rows[target["name"]] = {
+            **{key: q[key] for key in ("input_scale", "input_zero_point", "weight_scale", "weight_zero_point")},
+            **{key: q[key] for key in ("output_scale", "output_zero_point")},
+            "output_qre_scale": qre["output_scale"],
+            "output_qre_zero_point": qre["output_zero_point"],
+        }
+    if set(rows) != set(TARGETS):
+        raise RuntimeError("FAIL_CLOSED: Voyager qparam target set does not match terminal head")
+    return rows
 
 
 def _parent_and_leaf(model: nn.Module, dotted: str) -> tuple[nn.Module, str]:
@@ -105,14 +366,32 @@ def get_target_modules(model: nn.Module) -> dict[str, nn.Module]:
     return {name: found[name] for name in TARGETS}
 
 
-def install_head_fake_qat(model: nn.Module) -> None:
+def install_head_fake_qat(model: nn.Module, quantizer: str = "symmetric") -> None:
     """Replace exactly the six approved raw-head terminal Conv2d modules."""
     targets = get_target_modules(model)
+    voyager_qparams = (
+        load_voyager_qparams() if quantizer in {"voyager", "voyager-integer", "voyager-integer-clipped"} else None
+    )
+    if quantizer not in {"symmetric", "voyager", "voyager-integer", "voyager-integer-clipped"}:
+        raise RuntimeError(f"FAIL_CLOSED: unsupported QAT quantizer {quantizer}")
     if any(type(module) is not nn.Conv2d for module in targets.values()):
         raise RuntimeError("target set must be stock torch.nn.Conv2d before installation")
     for name, source in targets.items():
         parent, leaf = _parent_and_leaf(model, name)
-        replacement = STEQATConv2d(source).to(device=source.weight.device, dtype=source.weight.dtype)
+        replacement_cls = (
+            VoyagerIntegerClippedSTEQATConv2d
+            if quantizer == "voyager-integer-clipped"
+            else VoyagerIntegerSTEQATConv2d
+            if quantizer == "voyager-integer"
+            else VoyagerSTEQATConv2d
+            if quantizer == "voyager"
+            else STEQATConv2d
+        )
+        replacement = (
+            replacement_cls(source, voyager_qparams[name])
+            if quantizer in {"voyager", "voyager-integer", "voyager-integer-clipped"}
+            else replacement_cls(source)
+        ).to(device=source.weight.device, dtype=source.weight.dtype)
         if leaf.isdigit():
             parent[int(leaf)] = replacement  # type: ignore[index]
         else:
@@ -122,11 +401,22 @@ def install_head_fake_qat(model: nn.Module) -> None:
 def strip_head_fake_qat(model: nn.Module) -> None:
     """Restore stock Conv2d modules while retaining the trained target tensors."""
     for name, module in get_target_modules(model).items():
-        if type(module) is not STEQATConv2d:
+        if type(module) not in {
+            STEQATConv2d,
+            VoyagerSTEQATConv2d,
+            VoyagerIntegerSTEQATConv2d,
+            VoyagerIntegerClippedSTEQATConv2d,
+        }:
             raise RuntimeError(f"cannot strip non-QAT target {name}: {type(module).__name__}")
         plain = nn.Conv2d(
-            module.in_channels, module.out_channels, module.kernel_size, module.stride,
-            module.padding, module.dilation, module.groups, module.bias is not None,
+            module.in_channels,
+            module.out_channels,
+            module.kernel_size,
+            module.stride,
+            module.padding,
+            module.dilation,
+            module.groups,
+            module.bias is not None,
             module.padding_mode,
         ).to(device=module.weight.device, dtype=module.weight.dtype)
         with torch.no_grad():
@@ -161,8 +451,10 @@ def parameter_hashes(model: nn.Module) -> dict[str, str]:
 
 def state_dict_hashes(model: nn.Module) -> dict[str, str]:
     """Hash parameters and buffers, so BatchNorm drift cannot hide behind freezing."""
-    return {name: hashlib.sha256(value.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
-            for name, value in model.state_dict().items()}
+    return {
+        name: hashlib.sha256(value.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
+        for name, value in model.state_dict().items()
+    }
 
 
 def assert_state_only_targets_changed(before: dict[str, str], model: nn.Module) -> set[str]:
@@ -204,7 +496,9 @@ def assert_only_targets_changed(changed: Iterable[str]) -> None:
         raise RuntimeError(f"non-head parameter mutation: {unexpected}")
 
 
-def head_logit_consistency(student_outputs: dict[str, torch.Tensor], teacher_outputs: dict[str, torch.Tensor]) -> torch.Tensor:
+def head_logit_consistency(
+    student_outputs: dict[str, torch.Tensor], teacher_outputs: dict[str, torch.Tensor]
+) -> torch.Tensor:
     """MSE over the pre-Sigmoid score logits from the ordinary training forward."""
     return F.mse_loss(student_outputs["scores"], teacher_outputs["scores"].detach())
 
@@ -251,12 +545,25 @@ def one_batch_step(
             ) from error
         raise
     trainable = [parameter for parameter in student.parameters() if parameter.requires_grad]
-    if any(parameter.grad is None or not torch.isfinite(parameter.grad).all() for parameter in trainable):
-        raise RuntimeError("FAIL_CLOSED: non-finite or missing trainable gradient")
+    missing = [
+        name for name, parameter in student.named_parameters() if parameter.requires_grad and parameter.grad is None
+    ]
+    nonfinite = [
+        name
+        for name, parameter in student.named_parameters()
+        if parameter.requires_grad and parameter.grad is not None and not torch.isfinite(parameter.grad).all()
+    ]
+    if missing or nonfinite:
+        raise RuntimeError(
+            f"FAIL_CLOSED: non-finite or missing trainable gradient; missing={missing}; nonfinite={nonfinite}"
+        )
     optimizer.step()
     if any(not torch.isfinite(parameter).all() for parameter in trainable):
         raise RuntimeError("FAIL_CLOSED: non-finite target parameter after step")
-    return {"detection_loss": float(detection_loss.detach().sum().cpu()), "consistency_loss": float(consistency.detach().cpu())}
+    return {
+        "detection_loss": float(detection_loss.detach().sum().cpu()),
+        "consistency_loss": float(consistency.detach().cpu()),
+    }
 
 
 def build_dataset_manifest(dataset_root: Path, calibration_names: Path, regression_dir: Path, output: Path) -> dict:
@@ -278,16 +585,30 @@ def build_dataset_manifest(dataset_root: Path, calibration_names: Path, regressi
             overlaps.append(path.name)
     if overlaps:
         raise RuntimeError(f"train corpus overlap forbidden: {sorted(set(overlaps))}")
-    manifest = {"schema_version": 2, "dataset_root": str(dataset_root), "files": records, "file_count": len(records),
-                "image_label_stems_equal": True, "calibration_names_sha256": hashlib.sha256(calibration_names.read_bytes()).hexdigest(),
-                "calibration_names": sorted(calibration), "regression_files": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in regression_files], "overlap": []}
+    manifest = {
+        "schema_version": 2,
+        "dataset_root": str(dataset_root),
+        "files": records,
+        "file_count": len(records),
+        "image_label_stems_equal": True,
+        "calibration_names_sha256": hashlib.sha256(calibration_names.read_bytes()).hexdigest(),
+        "calibration_names": sorted(calibration),
+        "regression_files": [
+            {"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in regression_files
+        ],
+        "overlap": [],
+    }
     output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest
 
 
 def export_plain_raw_onnx(model: nn.Module, output: Path, sample: torch.Tensor) -> None:
     """Export a stock, raw-output ONNX. Call only after ``strip_head_fake_qat``."""
-    if any(type(module) is STEQATConv2d for module in get_target_modules(model).values()):
+    if any(
+        type(module)
+        in {STEQATConv2d, VoyagerSTEQATConv2d, VoyagerIntegerSTEQATConv2d, VoyagerIntegerClippedSTEQATConv2d}
+        for module in get_target_modules(model).values()
+    ):
         raise RuntimeError("refusing ONNX export with fake-QAT wrappers present")
     # Export and ORT parity use the same CPU numerical path; the trained source
     # remains on MPS for the caller's subsequent update steps.
@@ -295,4 +616,6 @@ def export_plain_raw_onnx(model: nn.Module, output: Path, sample: torch.Tensor) 
     sample = sample.detach().cpu()
     model.model[-1].end2end = False
     # The pinned environment has no onnxscript; force the stock legacy exporter.
-    torch.onnx.export(model, sample, output, opset_version=17, input_names=["images"], output_names=["output0"], dynamo=False)
+    torch.onnx.export(
+        model, sample, output, opset_version=17, input_names=["images"], output_names=["output0"], dynamo=False
+    )
