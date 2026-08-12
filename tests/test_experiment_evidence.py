@@ -53,6 +53,7 @@ def _binding(*, policy: GatePolicy | None = None, **updates: object) -> Comparis
         "evaluation_dataset_digest": DIGEST_A,
         "calibration_dataset_digest": DIGEST_A,
         "policy_digest": (policy or _policy()).digest,
+        "validation_report_digest": DIGEST_A,
         "reference_runtime_fingerprint_digest": DIGEST_A,
         "candidate_runtime_fingerprint_digest": DIGEST_A,
         "hardware_digest": DIGEST_A,
@@ -231,6 +232,8 @@ class TestMetrics:
             ({"high_confidence_lost": 1}, "high_confidence_lost"),
             ({"high_confidence_added": 1}, "high_confidence_added"),
             ({"class_mismatches": 58}, "class_mismatches"),
+            ({"inventory_complete": False}, "inventory_complete"),
+            ({"candidate_evaluated_images": 2}, "evaluated image counts"),
         ],
     )
     def test_inconsistent_counts_rejected(self, updates: dict[str, object], message: str):
@@ -330,6 +333,15 @@ class TestGatesAndReport:
         report = _valid_report()
         assert isinstance(report.candidates, tuple)
         assert all(isinstance(candidate.gate_results, tuple) for candidate in report.candidates)
+        assert {gate.kind for gate in report.candidates[0].gate_results} == {
+            "inventory",
+            "map_drop",
+            "coverage",
+            "score_delta",
+            "class_mismatches",
+            "high_confidence_lost",
+            "high_confidence_added",
+        }
 
 
 class TestStrictLoadingAndCLI:

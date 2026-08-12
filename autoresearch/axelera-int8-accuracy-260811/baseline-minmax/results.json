@@ -1,0 +1,56 @@
+{
+  "candidate": {
+    "dependencies": [
+      {
+        "field": "quantized_model_file",
+        "path": "/home/ubuntu/voyager-sdk/build/yolo26n-coco-onnx/yolo26n-coco-onnx/quantized/quantized_model.pt",
+        "sha256": "496515a105db8db3a3a1778b47da6fd93c26d77da29ff78a7dd435b57f78d3ac"
+      },
+      {
+        "field": "postprocess_graph",
+        "path": "/home/ubuntu/voyager-sdk/build/yolo26n-coco-onnx/yolo26n-coco-onnx/quantized/postprocess_graph.onnx",
+        "sha256": "33545c792ce1fd678d4c80bd2413553963eabb93664f7ba98524b93164a6bc0f"
+      }
+    ],
+    "manifest": "/home/ubuntu/voyager-sdk/build/yolo26n-coco-onnx/yolo26n-coco-onnx/quantized/manifest.json",
+    "manifest_sha256": "daa2f8b192ba2558a8fa67590e3c481752739c4291ab60d38b37e2ffc8ea2689",
+    "map50_95": 0.2959369783132159,
+    "map_drop": 0.02134108355890535
+  },
+  "dataset": {
+    "annotations": "/home/ubuntu/vision-buildkit/autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset/instances.json",
+    "images": 10,
+    "sha256": "f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c"
+  },
+  "decision": "FAIL",
+  "evidence_kind": "axelera_cpu_quantized_simulator_screening",
+  "gates": {
+    "class_mismatches": false,
+    "coverage": false,
+    "map_drop": false,
+    "max_score_delta": false
+  },
+  "non_claim": "Candidate execution used the Axelera CPU quantized-model simulator, not the Metis AIPU.",
+  "parity": {
+    "candidate_detections": 50,
+    "class_mismatches": 2,
+    "coverage": 0.8596491228070176,
+    "high_confidence_added": 0,
+    "high_confidence_lost": 1,
+    "matched": 49,
+    "max_score_delta": 0.3175163269042969,
+    "mean_iou": 0.9577250030032218,
+    "mean_score_delta": 0.09416093570845467,
+    "min_iou": 0.8954484226982999,
+    "reference_detections": 57,
+    "unmatched_candidate": 1,
+    "unmatched_reference": 8
+  },
+  "schema_version": 1,
+  "source": {
+    "map50_95": 0.31727806187212126,
+    "path": "/home/ubuntu/vision-buildkit/yolo26n.onnx",
+    "sha256": "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c"
+  },
+  "threshold": 0.25
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "review_id": "sr-int32-output",
+  "reviewer_id": "axelera-scientific-review-sol-high",
+  "experiment_id": "e-int32-output",
+  "candidate_id": "c-int32-output",
+  "decision": "DISCARD",
+  "reasons": [
+    "SDK 1.7.0 explicitly reset quantization_output_dtype=int32 to None.",
+    "The quantized-model SHA is identical to the raw-output baseline.",
+    "Source and candidate predictions and all frozen metrics are unchanged.",
+    "Only one of four gates passes and there is no AIPU evidence."
+  ],
+  "interpretation": "The experiment does not test whether genuine INT32 boundary tensors would help because the requested field was not applied.",
+  "tsv_note": "The final TSV status 'keep' is the classic autoresearch retention marker required by the evidence protocol; it is not the scientific decision.",
+  "next_hypothesis": "Set unrestricted remove_io_quantization=true, preflight that the effective compiler config retains it, and stop before evaluation unless the quantized artifact SHA changes from the baseline."
+}

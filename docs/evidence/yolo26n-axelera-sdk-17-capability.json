@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "status": "FAIL",
+  "evidence_kind": "observed_unsigned_development",
+  "publishable": false,
+  "certified": false,
+  "model": "YOLO26n",
+  "target": "Axelera Metis",
+  "sdk": {
+    "host": "axe-ubuntu-125",
+    "root": "/home/ubuntu/voyager-sdk",
+    "git": "7e2672f73630585fea6027eea6274b80b51a5033",
+    "runtime": "1.7.0-1",
+    "firmware": "1.7.0"
+  },
+  "command": "ssh -o BatchMode=yes ubuntu@100.127.83.2 '/home/ubuntu/voyager-sdk/venv/bin/python -c \"from axelera.compiler.config import CompilerConfig; from axelera.compiler.config.compiler_types import GraphCleanerNode; print(sorted(CompilerConfig.model_fields)); print([x.value for x in GraphCleanerNode])\"'",
+  "public_schema": {
+    "graph_cleaner_nodes": ["MatMul", "Gemm", "Clip"],
+    "graph_cleaner_controls": [
+      "run_graph_cleaner",
+      "graph_cleaner_split_pre_post_processing",
+      "graph_cleaner_condition",
+      "graph_cleaner_node",
+      "graph_cleaner_threshold",
+      "graph_cleaner_dump_core_onnx",
+      "graph_cleaner_dump_full_opt_onnx"
+    ],
+    "terminal_conv_exclusion": false,
+    "output_redefinition": false,
+    "ignore_scope": false
+  },
+  "finding": {
+    "supported": [
+      "Graph-cleaner split conditions on MatMul, Gemm, or Clip",
+      "Whole-graph quantization configuration",
+      "Input/output Q/DQ removal"
+    ],
+    "not_supported_by_public_schema": [
+      "Exclude the six terminal Detect Conv nodes from INT8",
+      "Redefine terminal Conv outputs as host-FP outputs",
+      "Provide an OpenVINO-style per-node ignore scope"
+    ],
+    "impact": "The current SDK cannot express the required score-head mixed-precision policy through its public CompilerConfig. Custom ONNX local functions are not a supported substitute because graph cleaning strips their FunctionProto bodies."
+  },
+  "decision": "BLOCKED_PENDING_SDK_FEATURE_OR_NEWER_SDK",
+  "non_claims": [
+    "This is a public-schema capability result, not proof that no private vendor hook exists.",
+    "It is not an AIPU accuracy, latency, or production-support claim.",
+    "It does not justify another blind QAT variant under SDK 1.7.0."
+  ]
+}

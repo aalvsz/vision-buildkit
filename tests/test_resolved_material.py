@@ -239,6 +239,17 @@ def _coordinated_decoy(raw: dict, entry: dict) -> None:
     marker = hashlib.sha256(validation_bytes).hexdigest()
     (result_root / "COMMITTED").write_text(marker)
     (Path(evidence["root"]) / "COMMITTED").write_text(marker)
+    from vision.experiment_evidence import experiment_report_from_validation
+    from vision.validation import ValidationReport
+
+    experiment = experiment_report_from_validation(ValidationReport.model_validate(validation))
+    experiment_bytes = json.dumps(
+        experiment.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    (result_root / "experiment_report.json").write_bytes(experiment_bytes)
+    (result_root / "EXPERIMENT_COMMITTED").write_text(hashlib.sha256(experiment_bytes).hexdigest())
 
     evidence["resolved"] = resolved
     evidence["expected_policy_digest"] = validation["policy_digest"]

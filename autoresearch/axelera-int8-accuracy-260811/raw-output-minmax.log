@@ -1,0 +1,254 @@
+[11:06:26.890] DEBUG   :axelera.app.network: Create network from ax_models/cv_engine_experiments/raw-output-minmax.yaml
+[11:06:30.917] DEBUG   :axelera.app.network: Register custom operator 'decodeyolo' with class DecodeYolo from ax_models/decoders/yolo.py
+[11:06:30.920] INFO    :axelera.app.pipeline: Detected Metis type as none
+[11:06:30.920] DEBUG   :axelera.app.network: Deploying for 1 cores instead of 8 due to max_compiler_cores setting (for metis: none)
+[11:06:30.920] INFO    :axelera.app.pipeline: ## Quantizing network yolo26n-raw-output-minmax **/home/ubuntu/voyager-sdk/ax_models/cv_engine_experiments/raw-output-minmax.yaml**
+[11:06:30.921] DEBUG   :axelera.app.config: Loaded TOML config: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/raw-output-minmax.toml
+[11:06:30.921] INFO    :axelera.app.config: Loading compiler config from TOML: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/raw-output-minmax.toml
+[11:06:30.921] INFO    :axelera.app.config: TOML source: local file
+[11:06:30.921] INFO    :axelera.app.config: Compilation config sources: TOML fields: 2, YAML overrides: 0
+[11:06:30.921] INFO    :axelera.app.pipeline: Compile model: yolo26n-raw-output-minmax
+[11:06:30.922] DEBUG   :axelera.app.network: Import model of type AxONNXModel from /home/ubuntu/voyager-sdk/ax_models/base_onnx.py
+[11:06:30.922] DEBUG   :axelera.app.network: Instantiate model: yolo26n-raw-output-minmax
+[11:06:30.923] DEBUG   :axelera.app.network: Imported DataAdapter ObjDataAdapter from /home/ubuntu/voyager-sdk/ax_datasets/objdataadapter.py
+[11:06:30.923] DEBUG   :objdataadapter: Label type is SupportedLabelType.COCO2017
+[11:06:30.923] DEBUG   :base_onnx: Load ONNX model with weights /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw.onnx
+[11:06:30.934] DEBUG   :ax_models.onnx_optimizations: Focus+Conv pattern not found or already replaced.
+[11:06:30.934] DEBUG   :axelera.app.pipeline: Compose dataset calibration transforms
+[11:06:30.934] INFO    :axelera.types.data: Using representative images from /home/ubuntu/.cache/axelera/data/coco2017_repr400 with backend ImageReader.PIL,pipeline input color format ColorFormat.RGB
+[11:06:30.940] DEBUG   :axelera.types.helper: Found 416 images in /home/ubuntu/.cache/axelera/data/coco2017_repr400
+[11:06:30.940] WARNING :axelera.app.pipeline: The calibration dataloader does not appear to have a suitably representative dataset.
+[11:06:30.940] WARNING :axelera.app.pipeline: This may give poor calibration results.
+[11:06:30.941] DEBUG   :axelera.app.compile: output path: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax/yolo26n-raw-output-minmax/yolo26n-raw-output-minmax/quantized
+[11:06:30.941] DEBUG   :axelera.app.compile: deploy mode: DeployMode.QUANTIZE
+[11:06:30.941] INFO    :axelera.app.compile: Copied TOML config to: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax/yolo26n-raw-output-minmax/yolo26n-raw-output-minmax/compiler_config.toml
+[11:06:30.941] DEBUG   :axelera.app.compile: Preparing build directory: /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax/yolo26n-raw-output-minmax/yolo26n-raw-output-minmax/quantized
+[11:06:30.941] DEBUG   :axelera.app.compile: Compilation config: {
+[11:06:30.941] DEBUG   :axelera.app.compile:   "compiler_version": "7e2672f",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "is_final": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "apply_pword_padding": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "rewrite_concat_to_resadd": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "rewrite_dense_to_conv2d": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "enable_layout_transformation": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "remove_io_padding_and_layout_transform": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "apply_arithmetic_simplification": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "simplify_mac_before_after_lut": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "propagate_layout_transform_reshape": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "remove_strided_slice_from_output": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "validate_operators": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "output_axm_format": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "output_dir": "/home/ubuntu/voyager-sdk",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "remove_output_dir": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "compiler_dir": "/home/ubuntu/voyager-sdk/venv/lib/python3.12/site-packages/axelera/compiler",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "compiler_mode": "quantize_only",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "max_processes_used_during_compilation": -1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "max_memory_used_during_compilation": 8589934592,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "model_name": "model",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "model_metadata": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_dpu_dtype": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_activation_dtype": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_summation_dtype": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_output_dtype": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "onnx_opset_version": 17,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_debug": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantization_scheme": "per_tensor_min_max",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "model_debug_save_dir": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax/yolo26n-raw-output-minmax/yolo26n-raw-output-minmax/quantized",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantize_dw_channel_wise": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantized_graph_export": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "quantize_matmul_strategy": "both_symmetric",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "do_quantize_residuals": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "smoothquant_coefficient": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "remove_io_quantization": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "run_graph_cleaner": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_split_pre_post_processing": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_condition": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_node": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_threshold": 0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_dump_core_onnx": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "graph_cleaner_dump_full_opt_onnx": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "remove_layout_transform_from_preamble": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "pipeline_spatial_tiles": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "pipeline_channel_tiles": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "inter_operator_async": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "use_list_scheduler": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "unroll_prologue_epilogue": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "use_hw_tokens": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "group_ifdw_tasks": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "double_buffer": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "max_memplan_attempts": 5,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "max_tiling_attempts": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "force_h_tiling": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "force_oc_tiling": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "tiling_depth": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dfs_search_constraint": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "enable_buffer_promotion": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "split_buffer_promotion": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "io_memory_pool": "global.ddr",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "constant_memory_pool": "global.ddr",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "workspace_memory_pool": "global.ddr",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_constraint": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l2_constraint": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "ddr_constraint": null,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "use_sysdma": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "ignore_weight_buffers": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dma_dual_channel": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_constants_home": "global.l2",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_instructions_home": "default",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dwpu_instructions_home": "default",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "page_memory": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "elf_in_ddr": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "stream_tasklist": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_utilization_limit": 1.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "enable_icr": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "icrx_force": -1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "icrx_parallel_block_threshold": 4,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "icrx_max_factor": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "enable_swicr": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "imc_double_buffer_pipeline": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "imc_double_buffer_sequential": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_allocation_algorithm": "try_all",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "softmax_neutral_value": -100000.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "target": "device",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "generation": "omega",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "board_type": "pcie",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "frequency": 800000000,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "aipu_cores_used": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "resources_used": 0.25,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "multicore_mode": "batch",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_size_reserved": 524288,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_size_used": 4194304,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_virtual_address": 206175207424,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_core0_physical_address": 402653184,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l2_size_reserved": 1245184,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l2_size_reserved_tasklist": 1048576,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l2_size_used": 33554432,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "ddr_size_max": 1073741824,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "ddr_size_reserved": 33554432,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "ddr_size_used": 1073741824,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "host_arch": "x86_64",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "host_os": "linux",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "host_threads_used": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "host_processes_used": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "input_dmabuf": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "output_dmabuf": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "executor_version": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "runtime_dir": "/home/ubuntu/voyager-sdk",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "device_dir": "/home/ubuntu/voyager-sdk",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "pword_len": 64,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "aipu_cores_max": 4,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "resources_max": 1.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "spm_size_max": 65536,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l1_size_max": 4194304,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "l2_size_max": 33554432,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_width": 512,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_height": 512,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_num_cols": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_num_rows": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_num_weightsets": 4,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_dcyle_per_imc_mac": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_prog_bit_per_cycle": 512.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_prog_pw_per_cycle": 1.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_in_pw_per_cycle": 1.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "mvm_out_pw_per_cycle": 1.0,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dwpu_instr_mem_size": 1024,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dwpu_sp_size": 126,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dwpu_weight_reg_size": 4096,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_reg_bank_a_depth": 8,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_reg_bank_b_depth": 64,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_reg_bank_c_depth": 64,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dpu_lut_nbins": 16,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "test_mode": "compile_and_run",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "iterations": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "iterations_to_check": 1,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "test_timeout": 3600,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "visualize_buffer_allocation": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "dump_atex": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "trace_tvm_passes": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "trace_pass_input": [],
+[11:06:30.941] DEBUG   :axelera.app.compile:   "trace_pass_output": [],
+[11:06:30.941] DEBUG   :axelera.app.compile:   "propagate_span_information": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_enable": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_autosave_on_failure": false,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_check_compatibility": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_load_path": "",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_save_path": "",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_save_after_pass": "",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "checkpoint_stop_after_pass": "",
+[11:06:30.941] DEBUG   :axelera.app.compile:   "profiling_levels": [],
+[11:06:30.941] DEBUG   :axelera.app.compile:   "profiling_drop_percentile": 0.25,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "randomize_onnx_model": true,
+[11:06:30.941] DEBUG   :axelera.app.compile:   "save_error_artifact": false
+[11:06:30.941] DEBUG   :axelera.app.compile: }
+[11:06:30.942] DEBUG   :axelera.app.compile: Saved compilation config to '/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax/yolo26n-raw-output-minmax/yolo26n-raw-output-minmax/compile_config.json'
+[11:06:30.942] DEBUG   :axelera.app.compile: [1;33mIf reporting issues, please include this file as an attachment.[0m
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.10/m/m.0/attn/Reshape' may not be supported. 'Reshape' parameters:
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 256, 20, 20), is_constant=False)
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 2, 128, 400), is_constant=False)
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.955] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.10/m/m.0/attn/Reshape_2' may not be supported. 'Reshape' parameters:
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 64, 400), is_constant=False)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 128, 20, 20), is_constant=False)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.10/m/m.0/attn/Transpose' may not be supported. 'Transpose' parameters:
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	perm: [0, 1, 3, 2]
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 32, 400), is_constant=False)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.utils: 	transposed: Metadata(shape=(1, 2, 400, 32), is_constant=False)
+[11:06:36.956] WARNING :axelera.compiler.utils.onnx_validator.validator: Unsatisfied constraint: perm == [0, 1, 2, 3]
+[11:06:36.957] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.10/m/m.0/attn/MatMul' implements operator 'MatMul', which may not be supported.
+[11:06:36.957] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.10/m/m.0/attn/Softmax' implements operator 'Softmax', which may not be supported.
+[11:06:36.957] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.10/m/m.0/attn/Transpose_1' may not be supported. 'Transpose' parameters:
+[11:06:36.957] WARNING :axelera.compiler.utils.onnx_validator.utils: 	perm: [0, 1, 3, 2]
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 400, 400), is_constant=False)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	transposed: Metadata(shape=(1, 2, 400, 400), is_constant=False)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.validator: Unsatisfied constraint: perm == [0, 1, 2, 3]
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.10/m/m.0/attn/MatMul_1' implements operator 'MatMul', which may not be supported.
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.10/m/m.0/attn/Reshape_1' may not be supported. 'Reshape' parameters:
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 64, 400), is_constant=False)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 128, 20, 20), is_constant=False)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.958] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.22/m.0/m.0.1/attn/Reshape' may not be supported. 'Reshape' parameters:
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 256, 20, 20), is_constant=False)
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 2, 128, 400), is_constant=False)
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.995] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.22/m.0/m.0.1/attn/Reshape_2' may not be supported. 'Reshape' parameters:
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 64, 400), is_constant=False)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 128, 20, 20), is_constant=False)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.22/m.0/m.0.1/attn/Transpose' may not be supported. 'Transpose' parameters:
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	perm: [0, 1, 3, 2]
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 32, 400), is_constant=False)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.utils: 	transposed: Metadata(shape=(1, 2, 400, 32), is_constant=False)
+[11:06:36.996] WARNING :axelera.compiler.utils.onnx_validator.validator: Unsatisfied constraint: perm == [0, 1, 2, 3]
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.22/m.0/m.0.1/attn/MatMul' implements operator 'MatMul', which may not be supported.
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.22/m.0/m.0.1/attn/Softmax' implements operator 'Softmax', which may not be supported.
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.22/m.0/m.0.1/attn/Transpose_1' may not be supported. 'Transpose' parameters:
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.utils: 	perm: [0, 1, 3, 2]
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 400, 400), is_constant=False)
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.utils: 	transposed: Metadata(shape=(1, 2, 400, 400), is_constant=False)
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.validator: Unsatisfied constraint: perm == [0, 1, 2, 3]
+[11:06:36.997] WARNING :axelera.compiler.utils.onnx_validator.validator: Node '/model.22/m.0/m.0.1/attn/MatMul_1' implements operator 'MatMul', which may not be supported.
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.validator: Configuration of node '/model.22/m.0/m.0.1/attn/Reshape_1' may not be supported. 'Reshape' parameters:
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.utils: 	allowzero: 0
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.utils: 	data: Metadata(shape=(1, 2, 64, 400), is_constant=False)
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.utils: 	shape: Metadata(shape=(4,), is_constant=True)
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.utils: 	reshaped: Metadata(shape=(1, 128, 20, 20), is_constant=False)
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and np.array_equal(shape, data.shape)
+[11:06:36.998] WARNING :axelera.compiler.utils.onnx_validator.validator: 'Reshape' parameters do not match supported configuration: allowzero == 0 and len(data.shape) >= 2 and len(shape) == 2 and shape[0] == data.shape[0] and (shape[1] == data.shape[1] or shape[1] == -1)
+[11:06:37.005] WARNING :axelera.compiler.utils.onnx_validator.validator: The operator compatibility warnings above suggest this model may not be supported by the Axelera Compiler.
+[11:07:19.604] DEBUG   :axelera.app.network: ~<any-user>/.cache/axelera/ not found in path /home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw.onnx
+[11:07:19.604] INFO    : Quantizing yolo26n-raw-output-minmax took 52.713 seconds

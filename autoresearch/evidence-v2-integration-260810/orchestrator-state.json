@@ -1,0 +1,30 @@
+{
+  "goal": "Integrate canonical schema-v2 evidence into real validation and optimization paths, persist reproducible evidence bundles, and keep the full repository regression-clean",
+  "archetype": "explore",
+  "predicate": "/Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/python -m pytest -q && /Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/ruff check . && /Users/ander.alvarez/dev/perso/cv-engine/.venv/bin/ruff format --check vision tests scripts",
+  "terminal_choice": "stop-at-verified",
+  "cycle": 1,
+  "units_remaining": [],
+  "pipeline_log": [
+    {
+      "cycle": 1,
+      "outcome": "progressed",
+      "summary": "Observed validation now atomically emits schema-v2 experiment evidence; release capsules persist and cross-bind it; full regression and package build pass.",
+      "focused_tests": "201 passed",
+      "full_tests": "606 passed, 3 skipped",
+      "quality": "ruff check clean; ruff format clean; uv build succeeded"
+    }
+  ],
+  "current_incumbent": {
+    "base_commit": "42d51f73026d02feaa22d235bcf85d01370c50ee",
+    "branch": "codex/evidence-v2-integration",
+    "focused_tests": "201 passed",
+    "full_tests": "606 passed, 3 skipped",
+    "canonical_evidence_emission": true,
+    "release_capsule_binding": true,
+    "package_build": "PASS"
+  },
+  "units": 0,
+  "plateau": false,
+  "ceiling": false
+}

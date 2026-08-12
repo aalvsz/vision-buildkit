@@ -68,6 +68,31 @@ def _policy_digest(policy: ValidationPolicy) -> str:
     return _digest(policy.model_dump(mode="json"))
 
 
+def _validation_hardware_digest() -> str:
+    """Bind stable host facts without publishing a hostname or network identity."""
+
+    return _digest(
+        {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "logical_cpus": os.cpu_count(),
+        }
+    )
+
+
+def _validation_harness_digest() -> str:
+    return _digest(
+        {
+            "implementation": "vision.validation.validate_dataset",
+            "module_sha256": _sha(Path(__file__)),
+            "matching": "class-compatible-hungarian-max-iou",
+            "metrics": "pycocotools-cocoeval-bbox",
+        }
+    )
+
+
 _HEX64 = set("0123456789abcdef")
 
 
@@ -701,6 +726,18 @@ class ValidationReport(Strict):
     policy_digest: str = Field(min_length=64, max_length=64)
     evidence_kind: Literal["observed", "materialized"]
     publishable: bool
+    hardware_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, exclude_if=lambda value: value is None
+    )
+    harness_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, exclude_if=lambda value: value is None
+    )
+    candidate_graph_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, exclude_if=lambda value: value is None
+    )
+    calibration_digest: str | None = Field(
+        default=None, min_length=64, max_length=64, exclude_if=lambda value: value is None
+    )
     parity: dict[str, Any]
     map_reference: float = Field(ge=0, le=1)
     map_candidate: float = Field(ge=0, le=1)
@@ -737,6 +774,24 @@ class ValidationReport(Strict):
     @model_validator(mode="after")
     def valid(self):
         expected = self.derived_gates()
+        if (self.hardware_digest is None) != (self.harness_digest is None):
+            raise ValueError("validation hardware and harness identities must be recorded together")
+        if self.hardware_digest is not None and self.candidate_graph_digest is None:
+            raise ValueError("observed validation identity requires a candidate graph digest")
+        if (
+            self.evidence_kind == "observed"
+            and self.candidate.runtime.precision == "int8"
+            and self.calibration_digest is None
+        ):
+            raise ValueError("observed INT8 validation requires a calibration digest")
+        for value in (
+            self.hardware_digest,
+            self.harness_digest,
+            self.candidate_graph_digest,
+            self.calibration_digest,
+        ):
+            if value is not None and (len(value) != 64 or set(value) - _HEX64):
+                raise ValueError("validation evidence digests must be lowercase SHA-256 values")
         if self.reference.dataset_digest != self.dataset.digest or self.candidate.dataset_digest != self.dataset.digest:
             raise ValueError("prediction dataset identity mismatch")
         if self.policy_digest != _policy_digest(self.policy):
@@ -850,6 +905,23 @@ class ValidationReport(Strict):
         )
         if any(abs(left - right) > 1e-12 for left, right in zip(metrics, recorded, strict=True)):
             raise ValueError("validation report metrics were forged")
+        experiment_path = result / "experiment_report.json"
+        experiment_marker = result / "EXPERIMENT_COMMITTED"
+        if self.hardware_digest is not None:
+            if (
+                experiment_path.is_symlink()
+                or not experiment_path.is_file()
+                or experiment_marker.is_symlink()
+                or not experiment_marker.is_file()
+            ):
+                raise ValueError("canonical experiment evidence is not committed")
+            experiment_bytes = experiment_path.read_bytes()
+            if experiment_marker.read_text() != hashlib.sha256(experiment_bytes).hexdigest():
+                raise ValueError("experiment commit marker does not bind exact report bytes")
+            from ..experiment_evidence import ExperimentReport
+
+            experiment = ExperimentReport.model_validate_json(experiment_bytes)
+            experiment.verify_validation_binding(self)
         self.__class__.model_validate(self.model_dump(mode="json"))
         return True
 
@@ -1030,6 +1102,35 @@ def _validate_materialized(
     except Exception:
         _cleanup_owned(reservation)
         raise
+
+
+def _target_build_evidence(target: ModelTarget, runtime: RuntimeExecutionIdentity) -> tuple[str, str | None]:
+    """Recover graph and calibration identities from a verified adjacent build report."""
+
+    graph_digest = target.source_sha256
+    calibration_digest = None
+    report_path = Path(f"{target.source}.build-report.json")
+    if report_path.exists() or report_path.is_symlink():
+        if report_path.is_symlink() or not report_path.is_file():
+            raise ValueError("candidate build report must be a regular non-symlink file")
+        from ..export import BuildReport
+
+        build_report = BuildReport.model_validate_json(report_path.read_text())
+        if build_report.self_digest != build_report.finalized().self_digest:
+            raise ValueError("candidate build report self digest mismatch")
+        if (
+            Path(build_report.output).resolve() != Path(target.source).resolve()
+            or build_report.output_digest != target.source_sha256
+            or build_report.artifact_digests.get(Path(target.source).name) != target.source_sha256
+            or build_report.target != runtime.backend
+            or build_report.effective_precision != runtime.precision
+        ):
+            raise ValueError("candidate build report is not bound to the validated runtime artifact")
+        graph_digest = build_report.intermediate_digest
+        calibration_digest = build_report.calibration_digest
+    if runtime.precision == "int8" and calibration_digest is None:
+        raise ValueError("observed INT8 validation requires a bound calibration build report")
+    return graph_digest, calibration_digest
 
 
 def _reserve_output(output: Path, policy_digest: str) -> dict[str, Any]:
@@ -1261,6 +1362,16 @@ def _publish_materialized(
             ),
             "map": mr - mc <= policy.max_map_drop,
         }
+        observed_bindings: dict[str, str | None] = {}
+        if evidence_kind == "observed":
+            candidate_graph_digest, calibration_digest = _target_build_evidence(candidate_target, candidate_runtime)
+            observed_bindings = {
+                "hardware_digest": _validation_hardware_digest(),
+                "harness_digest": _validation_harness_digest(),
+                "candidate_graph_digest": candidate_graph_digest,
+            }
+            if calibration_digest is not None:
+                observed_bindings["calibration_digest"] = calibration_digest
         body = {
             "dataset": dataset.model_dump(mode="json"),
             "reference": ref.model_dump(mode="json"),
@@ -1282,13 +1393,24 @@ def _publish_materialized(
             "ap75_candidate": a75c,
             "gates": gates,
             "passed": all(gates.values()),
-        }
+        } | observed_bindings
         report = ValidationReport(**(body | {"digest": _digest(body)}))
         report_bytes = _canonical(report.model_dump(mode="json"))
         _write_bytes_at(result_fd, "validation_report.json", report_bytes.encode())
+        if evidence_kind == "observed":
+            from ..experiment_evidence import experiment_report_from_validation
+
+            experiment = experiment_report_from_validation(report)
+            experiment_bytes = _canonical(experiment.model_dump(mode="json")).encode()
+            experiment_digest = hashlib.sha256(experiment_bytes).hexdigest()
+            _write_bytes_at(result_fd, "experiment_report.json", experiment_bytes)
+            _write_bytes_at(result_fd, "EXPERIMENT_COMMITTED", experiment_digest.encode())
         _write_bytes_at(result_fd, "COMMITTED", hashlib.sha256(report_bytes.encode()).hexdigest().encode())
         # Complete every public byte in the private stage before publication.
         _linkat(result_fd, "validation_report.json", stage_fd, "validation_report.json")
+        if evidence_kind == "observed":
+            _linkat(result_fd, "experiment_report.json", stage_fd, "experiment_report.json")
+            _linkat(result_fd, "EXPERIMENT_COMMITTED", stage_fd, "EXPERIMENT_COMMITTED")
         _write_bytes_at(stage_fd, "COMMITTED", hashlib.sha256(report_bytes.encode()).hexdigest().encode())
         _fsync_fd(result_fd)
         _fsync_fd(stage_fd)

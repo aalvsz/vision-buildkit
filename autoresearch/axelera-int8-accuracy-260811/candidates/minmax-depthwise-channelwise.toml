@@ -1,0 +1,4 @@
+quantization_scheme = "per_tensor_min_max"
+quantize_dw_channel_wise = true
+ignore_weight_buffers = false
+

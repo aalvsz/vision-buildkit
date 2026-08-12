@@ -16,8 +16,8 @@ Pydantic models with:
 - **Derived configuration_id** — computed from canonical JSON of parameters
   + binding (excluding the human label). Supplied IDs that do not equal the
   derived ID are rejected.
-- **Six recomputed gate booleans** — mAP drop, coverage, maximum score delta,
-  class mismatches, high-confidence losses, and high-confidence additions are
+- **Seven recomputed gate booleans** — complete image inventory, mAP drop,
+  coverage, maximum score delta, class mismatches, high-confidence losses, and high-confidence additions are
   recomputed from the candidate's metrics and report policy. Forged or
   mismatched booleans are rejected.
 - **Signed mAP delta** — `map_drop = reference_map - candidate_map`; a negative
@@ -26,6 +26,15 @@ Pydantic models with:
   with the matched, lost, and added detection counts.
 - **Derived report status** — `PASS` or `FAIL` only, derived from the
   selected candidate's gates. `PARTIAL_PASS` is not a canonical status.
+- **Validation-source binding** — observed `validate_dataset` runs publish the
+  canonical experiment report in the same atomic result directory and bind it
+  to the validation report, artifacts, runtime identities, dataset, host, and
+  exact validation-module digest.
+- **Release-capsule binding** — release publication copies the canonical report
+  to `evidence/experiment_report.json`, binds its exact bytes and source
+  validation digest into the capsule index, and rechecks its selected artifact
+  identity. Older release capsules must be rebuilt rather than silently
+  upgraded.
 
 ### Validation
 
@@ -62,3 +71,4 @@ with full artifact digests, binding, metrics, and recomputed gates.
 | `rtdetr-l-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
 | `rfdetr-base-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
 | `libreyolo9s-onnxruntime-apple-cpu.json` | 1 (legacy) | Historical record |
+| `yolo26n-axelera-sdk-17-capability.json` | 1 (legacy) | Public-schema capability limitation; no terminal-head exclusion hook |

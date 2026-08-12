@@ -39,6 +39,9 @@ Run the required checks:
 ```bash
 uv run ruff check .
 uv run ruff format --check vision tests scripts
+uv run python scripts/verify_repository.py
+uv run coverage run -m pytest -q
+uv run coverage report --fail-under=70
 uv run pytest -q
 uv build
 ```

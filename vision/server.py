@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import logging
 import os
 import statistics
 import tempfile
 import time
+import uuid
 from collections import deque
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -14,6 +17,8 @@ from typing import Annotated, Any
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
+
+LOGGER = logging.getLogger("vision.server")
 
 
 def _percentile(values: deque[float], percent: float) -> float:
@@ -87,6 +92,9 @@ class DeadlineBatcher:
         concurrency: int = 1,
         max_queue: int = 256,
         metrics_history: int = 4096,
+        request_timeout_s: float | None = None,
+        api_key: str | None = None,
+        rate_limit_per_minute: int | None = None,
     ):
         if window_ms < 0:
             raise ValueError("batch window must be non-negative")
@@ -94,6 +102,12 @@ class DeadlineBatcher:
             raise ValueError("max_batch, concurrency and max_queue must be positive")
         if max_queue < max_batch:
             raise ValueError("max_queue must be at least max_batch")
+        if request_timeout_s is not None and request_timeout_s <= 0:
+            raise ValueError("request timeout must be positive when configured")
+        if api_key is not None and not api_key:
+            raise ValueError("api key must not be empty when configured")
+        if rate_limit_per_minute is not None and rate_limit_per_minute <= 0:
+            raise ValueError("rate limit must be positive when configured")
         self.runner = runner
         self.window = window_ms / 1000
         self.max_batch = max_batch
@@ -105,6 +119,9 @@ class DeadlineBatcher:
         self._closed = False
         self.metrics = Metrics(metrics_history)
         self.sem = asyncio.Semaphore(concurrency)
+        self.request_timeout_s = request_timeout_s
+        self.api_key = api_key
+        self.rate_limit_per_minute = rate_limit_per_minute
 
     def _start_flush(self) -> None:
         task = asyncio.create_task(self.flush())
@@ -135,7 +152,13 @@ class DeadlineBatcher:
             else:
                 self._schedule_locked()
         try:
-            return await future
+            if self.request_timeout_s is None:
+                return await future
+            return await asyncio.wait_for(asyncio.shield(future), timeout=self.request_timeout_s)
+        except asyncio.TimeoutError as exc:
+            future.cancel()
+            self.metrics.errors += 1
+            raise HTTPException(504, "inference deadline exceeded") from exc
         except asyncio.CancelledError:
             future.cancel()
             raise
@@ -207,6 +230,9 @@ def create_app(
     max_queue: int = 256,
     batch_window_ms: int = 5,
     metrics_history: int = 4096,
+    request_timeout_s: float | None = None,
+    api_key: str | None = None,
+    rate_limit_per_minute: int | None = None,
     warmup: bool = True,
     warmup_size: tuple[int, int] = (640, 640),
     fail_on_warmup: bool = True,
@@ -223,6 +249,9 @@ def create_app(
         concurrency,
         max_queue,
         metrics_history,
+        request_timeout_s,
+        api_key,
+        rate_limit_per_minute,
     )
 
     @asynccontextmanager
@@ -234,12 +263,50 @@ def create_app(
                 if fail_on_warmup:
                     raise
         try:
+            app.state.ready = True
             yield
         finally:
+            app.state.ready = False
             await batcher.close()
 
-    app = FastAPI(title="Vision BuildKit", lifespan=lifespan)
+    app = FastAPI(
+        title="Vision BuildKit",
+        version="0.2.2",
+        description="Research-only object detection service; runtime claims remain evidence-bound.",
+        lifespan=lifespan,
+    )
     app.state.batcher = batcher
+    app.state.ready = False
+
+    @app.middleware("http")
+    async def request_id(request, call_next):
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        if batcher.api_key is not None and request.url.path.startswith("/v1/"):
+            supplied = request.headers.get("authorization", "")
+            expected = f"Bearer {batcher.api_key}"
+            if not hmac.compare_digest(supplied, expected):
+                response = JSONResponse({"detail": "authentication required"}, status_code=401)
+                response.headers["x-request-id"] = request_id
+                return response
+        if batcher.rate_limit_per_minute is not None and request.url.path.startswith("/v1/"):
+            now = time.monotonic()
+            window = getattr(app.state, "rate_window", {})
+            client = request.client.host if request.client else "unknown"
+            start, count = window.get(client, (now, 0))
+            if now - start >= 60:
+                start, count = now, 0
+            if count >= batcher.rate_limit_per_minute:
+                response = JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+                response.headers["retry-after"] = str(max(1, int(60 - (now - start))))
+                response.headers["x-request-id"] = request_id
+                return response
+            window[client] = (start, count + 1)
+            app.state.rate_window = window
+        LOGGER.info("request start id=%s method=%s path=%s", request_id, request.method, request.url.path)
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        LOGGER.info("request end id=%s status=%s", request_id, response.status_code)
+        return response
 
     async def read_body(upload: UploadFile) -> bytes:
         raw = await upload.read(max_upload_bytes + 1)
@@ -267,6 +334,18 @@ def create_app(
     async def detect(image: Annotated[UploadFile, File()]) -> JSONResponse:
         result = await batcher.submit(await read_image(image))
         return JSONResponse(_jsonable(result))
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        """Liveness endpoint: the process is responsive."""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Readiness endpoint: model warmup completed and queue accepts work."""
+        if not app.state.ready:
+            return JSONResponse({"status": "not_ready"}, status_code=503)
+        return JSONResponse({"status": "ready"})
 
     @app.post("/v1/video")
     async def video(

@@ -1,0 +1,44 @@
+{
+  "version": "2.1.0",
+  "source": "loop",
+  "timestamp": "2026-08-11T14:31:53Z",
+  "status": "COMPLETE",
+  "results_tsv": "smoothquant-03-results.tsv",
+  "findings": [
+    "SDK 1.7.0 retained smoothquant_coefficient=0.3 in the effective compile configuration.",
+    "The generated quantized_model.pt was byte-identical to raw-output-minmax, so the candidate failed before simulator screening."
+  ],
+  "config": {
+    "goal": "Reduce Axelera raw-output YOLO26n INT8 confidence error with SmoothQuant cross-layer equalization.",
+    "scope": "One-variable SDK 1.7.0 host quantization experiment; no simulator metric interpretation after artifact no-op; no AIPU execution.",
+    "metric": "maximum matched-detection score delta",
+    "direction": "lower_is_better",
+    "verify": "Require effective smoothquant_coefficient=0.3 and a quantized-model SHA different from raw-output-minmax before the frozen simulator screen."
+  },
+  "candidate": {
+    "id": "raw-output-minmax-smoothquant-03",
+    "commit": "a134a369001fa47e93f7d05bc3be0e34cb7cbc8b",
+    "manifest_sha256": "43c8673cb477d01bec8800233fd434c357d01b113b61dcbce4532b3e7d892015",
+    "requested_change": "smoothquant_coefficient=0.3",
+    "effective_change": "smoothquant_coefficient=0.3"
+  },
+  "execution": {
+    "host": "axe-ubuntu-125",
+    "sdk": "1.7.0 git 7e2672f",
+    "metis": "none",
+    "calibration_images": 200,
+    "aipu_execution": false,
+    "compiler_log_sha256": "78763a83e5ddf0b08ce2e75a83de7430fd8b333f0db2427014139d6542b7ddbb"
+  },
+  "result": {
+    "decision": "NO_OP_FAIL",
+    "effective_smoothquant_coefficient": 0.3,
+    "artifact_changed": false,
+    "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "baseline_quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "screen_run": false,
+    "metrics_interpreted": false
+  },
+  "interpretation": "SmoothQuant 0.3 is accepted by the configuration layer but produces no serialized quantized-model change for this raw graph and SDK path. The candidate is discarded without spending a redundant simulator screen.",
+  "non_claim": "This phase contains no Metis AIPU compile, execution, quality, latency, stability, or deployment result."
+}

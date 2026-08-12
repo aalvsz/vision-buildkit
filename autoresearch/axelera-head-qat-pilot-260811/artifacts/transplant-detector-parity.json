@@ -1,0 +1,32 @@
+{
+  "dev": {
+    "candidate_detections": 28,
+    "class_mismatches": 0,
+    "coverage": 1.0,
+    "matched": 28,
+    "max_score_delta": 1.0132789611816406e-06,
+    "min_iou": 0.9999983906745911,
+    "reference_detections": 28,
+    "set": "dev"
+  },
+  "heldout": {
+    "candidate_detections": 42,
+    "class_mismatches": 0,
+    "coverage": 1.0,
+    "matched": 42,
+    "max_score_delta": 1.519918441772461e-06,
+    "min_iou": 0.9999964833259583,
+    "reference_detections": 42,
+    "set": "heldout"
+  },
+  "regression": {
+    "candidate_detections": 58,
+    "class_mismatches": 0,
+    "coverage": 1.0,
+    "matched": 58,
+    "max_score_delta": 8.940696716308594e-07,
+    "min_iou": 0.9999969005584717,
+    "reference_detections": 58,
+    "set": "regression"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "candidate": "raw-output-minmax",
+  "command": [
+    "/home/ubuntu/voyager-sdk/venv/bin/python",
+    "deploy.py",
+    "ax_models/cv_engine_experiments/raw-output-minmax.yaml",
+    "--mode",
+    "QUANTIZE",
+    "--metis",
+    "none",
+    "--build-root",
+    "experiments/cv-engine-94527ce/build-raw-output-minmax",
+    "--num-cal-images",
+    "200",
+    "--loglevel",
+    "DEBUG",
+    "--logfile",
+    "experiments/cv-engine-94527ce/raw-output-minmax.log",
+    "--logtimestamp"
+  ],
+  "calibration": {
+    "images": 200,
+    "seed": null,
+    "ordering": "deterministic sorted order",
+    "dataset_path": "/home/ubuntu/.cache/axelera/data/coco2017_repr400",
+    "warning": "SDK reported that the calibration dataloader may not be suitably representative."
+  },
+  "execution": {
+    "metis": "none",
+    "compiler_mode": "quantize_only",
+    "aipu_used": false
+  },
+  "bindings": {
+    "source_onnx_sha256": "db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9",
+    "candidate_yaml_sha256": "19c49cae3e8f3488c5fc25b1d905cc08f0e0cd34ec55106f35ca3d520cccfdd5",
+    "compiler_toml_sha256": "c72260e6f653b18501b4d39888242f66a9deeb4b505488d6360dd289812b4476",
+    "compiler_log_sha256": "4debd678a50b2a516eb11314074fe08ad2ef7c37bea03edc66e405ead0fba1cf",
+    "manifest_sha256": "e35ad8f98fba9a4f08e11e8bd56dbbf59d41a3b21c1120d9483a6bbaeb281128",
+    "quantized_model_sha256": "98c267e55d99650e22362618ff3c6f265e3feda2c0cb8382f3cf34a23ee05110",
+    "screening_harness_sha256": "0d7552e9a0e2a09645e248b8202f9cc4628d5bd2d98f343cf9f91a687a84ba3a"
+  }
+}

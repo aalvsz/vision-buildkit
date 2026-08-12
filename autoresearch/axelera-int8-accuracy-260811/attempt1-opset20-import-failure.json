@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "status": "TERMINAL_FAIL_BEFORE_CALIBRATION",
+  "candidate": "per_tensor_histogram plus single_asymmetric MatMul",
+  "source_onnx_sha256": "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c",
+  "source_opset": 20,
+  "failure": "Converter is not implemented (OperationDescription(domain='', operation_type='Split', version=18))",
+  "interpretation": "The run did not test the MatMul hypothesis because the current SDK rejected the historical graph during ONNX-to-Torch import before calibration.",
+  "remote_artifacts": {
+    "log_sha256": "488cebc1b3be7e177747e13dcc6499f69dbe0453d98c0d79c7d45df4059474e8",
+    "compile_config_sha256": "ff0713d647d623e895b77f30db14d882723dbacce85e5e30e1ab50a424d0eafd",
+    "compiler_config_sha256": "4cc7f4ecb60e9babae7ae65317b25900f9957a88ef39a7f68d3bb7d9616067a3",
+    "cleaned_core_model_sha256": "adda8b325ccdfc9a4d1fbd815ddd135208334706157f3c0d020f2c37fcfd7ca9"
+  },
+  "device_execution": false
+}

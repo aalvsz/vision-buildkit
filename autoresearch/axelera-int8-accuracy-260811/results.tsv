@@ -1,0 +1,8 @@
+candidate	graph	status	source_map	candidate_map	map_drop	coverage	max_score_delta	class_mismatches	device_execution	decision
+baseline-minmax	end-to-end	completed	0.3172780619	0.2959369783	0.0213410836	0.8596491228	0.3175163269	2	false	DISCARD
+histogram-single-asymmetric-opset20	end-to-end	import-failed	NA	NA	NA	NA	NA	NA	false	DISCARD
+histogram-single-asymmetric-opset17	end-to-end	export-failed	NA	NA	NA	NA	NA	NA	false	DISCARD
+minmax-single-asymmetric	end-to-end	completed	0.3172780619	0.2959369783	0.0213410836	0.8596491228	0.3175163269	2	false	DISCARD
+minmax-depthwise-channelwise	end-to-end	completed	0.3172780619	0.2959369783	0.0213410836	0.8596491228	0.3175163269	2	false	DISCARD
+minmax-float-residuals	end-to-end	completed	0.3172780619	0.2959369783	0.0213410836	0.8596491228	0.3175163269	2	false	DISCARD
+raw-output-minmax	raw-output	completed	0.2826987766	0.3244028746	-0.0417040980	0.9655172414	0.4482248127	1	false	KEEP_RESEARCH_DIRECTION_ONLY

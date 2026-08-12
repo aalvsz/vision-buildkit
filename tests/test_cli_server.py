@@ -34,9 +34,14 @@ def test_cli_help():
 
 def test_server_image_and_bounded_metrics():
     with TestClient(create_app(FakeRunner(), warmup=False, batch_window_ms=0, metrics_history=1)) as client:
+        assert client.get("/healthz").json() == {"status": "ok"}
+        assert client.get("/readyz").json() == {"status": "ready"}
         for _ in range(2):
             response = client.post("/v1/detect", files={"image": ("a.png", png(), "image/png")})
             assert response.status_code == 200 and response.json()["boxes"] == []
+            assert response.headers["x-request-id"]
+        forwarded = client.get("/healthz", headers={"x-request-id": "trace-123"})
+        assert forwarded.headers["x-request-id"] == "trace-123"
         metrics = client.get("/metrics").json()
         assert metrics["requests"] == 2
         assert metrics["observations"] == 1
@@ -59,6 +64,27 @@ def test_invalid_server_configuration_fails_closed():
         create_app(FakeRunner(), max_queue=1, max_batch=2)
     with pytest.raises(ValueError):
         Metrics(history_size=0)
+    with pytest.raises(ValueError):
+        create_app(FakeRunner(), request_timeout_s=0)
+    with pytest.raises(ValueError):
+        create_app(FakeRunner(), api_key="")
+    with pytest.raises(ValueError):
+        create_app(FakeRunner(), rate_limit_per_minute=0)
+
+
+def test_optional_auth_and_rate_limit_are_fail_closed():
+    with TestClient(create_app(FakeRunner(), warmup=False, api_key="secret", rate_limit_per_minute=1)) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.post("/v1/detect", files={"image": ("a.png", png(), "image/png")}).status_code == 401
+        headers = {"authorization": "Bearer secret"}
+        assert (
+            client.post("/v1/detect", headers=headers, files={"image": ("a.png", png(), "image/png")}).status_code
+            == 200
+        )
+        assert (
+            client.post("/v1/detect", headers=headers, files={"image": ("a.png", png(), "image/png")}).status_code
+            == 429
+        )
 
 
 def test_queue_backpressure_and_result_cardinality():

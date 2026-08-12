@@ -1,5 +1,10 @@
 # Security Policy
 
+Vision BuildKit is research and evaluation software, not a hardened production
+inference service. Do not expose `vision serve` directly to an untrusted network
+without an authenticated reverse proxy, TLS termination, rate limiting, and
+resource isolation.
+
 ## Reporting a vulnerability
 
 Please do not open a public issue for a suspected vulnerability.
@@ -26,3 +31,11 @@ independently supported.
 Model checkpoints, ONNX graphs, TensorRT engines, OpenVINO artifacts, manifests,
 and Vision Capsules should be treated as untrusted input unless their expected
 content digest comes from a trusted source.
+
+## Deployment boundaries
+
+- Treat uploaded images and videos as untrusted input.
+- Keep upload, pixel, queue, batch, and duration limits enabled.
+- Run optional decoders and model runtimes in a restricted process or container.
+- Keep capsules, calibration data, model weights, and runtime logs out of public
+  issue reports unless their licenses and contents permit disclosure.

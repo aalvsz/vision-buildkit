@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "dataset_sha256": "f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c",
+  "images": 10,
+  "historical_opset20_sha256": "82849fd17775d3584c7d917f73464b43a54bb2001d30ff213efc95047e7c0e7c",
+  "sdk_opset17_sha256": "d502815b0ebd8a97d8ea48ddf23278118555f08d66022abb5a804deb4158d960",
+  "max_raw_output_absolute_delta": 0.0,
+  "historical_map50_95": 0.31727806187212126,
+  "sdk_map50_95": 0.31727806187212126,
+  "parity": {
+    "reference_detections": 57,
+    "candidate_detections": 57,
+    "matched": 57,
+    "coverage": 1.0,
+    "class_mismatches": 0,
+    "min_iou": 1.0,
+    "max_score_delta": 0.0
+  },
+  "scope": "Exact equality observed on the frozen ten-image subset only; not a whole-domain equivalence claim."
+}

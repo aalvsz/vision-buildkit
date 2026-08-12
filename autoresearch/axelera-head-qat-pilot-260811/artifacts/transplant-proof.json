@@ -1,0 +1,55 @@
+{
+  "corrected_graph": {
+    "initializers": 223,
+    "nodes": 368,
+    "outputs": [
+      [
+        "output0",
+        [
+          1,
+          84,
+          8400
+        ]
+      ]
+    ]
+  },
+  "corrected_sha256": "1b7c38d3da0003e94f5ba5ff13ab9de59b48c7c395c3fe208cfe8b829f09fc5b",
+  "eval_images": 30,
+  "non_target_initializers_identical": true,
+  "ort_max_abs_qat_output0_vs_corrected": 0.004241943359375,
+  "ort_max_abs_raw_vs_corrected": 0.131439208984375,
+  "q_or_dq_nodes": 0,
+  "raw_graph": {
+    "initializers": 223,
+    "nodes": 368,
+    "outputs": [
+      [
+        "output0",
+        [
+          1,
+          84,
+          8400
+        ]
+      ]
+    ]
+  },
+  "raw_sha256": "db42840c9ae5f1490c3d748f0bc72253d1509ed2c0f5d20b3f3847102596e9a9",
+  "replaced_initializers": [
+    "model.23.cv2.0.2.bias",
+    "model.23.cv2.0.2.weight",
+    "model.23.cv2.1.2.bias",
+    "model.23.cv2.1.2.weight",
+    "model.23.cv2.2.2.bias",
+    "model.23.cv2.2.2.weight",
+    "model.23.cv3.0.2.bias",
+    "model.23.cv3.0.2.weight",
+    "model.23.cv3.1.2.bias",
+    "model.23.cv3.1.2.weight",
+    "model.23.cv3.2.2.bias",
+    "model.23.cv3.2.2.weight"
+  ],
+  "schema_version": 1,
+  "status": "PASS_TOPOLOGY_PRESERVING_TRANSPLANT",
+  "topology_identical": true,
+  "trained_onnx_sha256": "2d311f23a069cda504edb79f44a7c7476a7fd60e582049f18cf654943327f787"
+}

@@ -1,0 +1,64 @@
+{
+  "candidate": {
+    "dependencies": [
+      {
+        "field": "quantized_model_file",
+        "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/quantized/quantized_model.pt",
+        "sha256": "d3f55bc8db137b687a049f87c3be0905ba297b3d91f938365d43e0b9faedb4fe"
+      },
+      {
+        "field": "postprocess_graph",
+        "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/quantized/postprocess_graph.onnx",
+        "sha256": "a2af1feff1159d2a6c8b678a61974ae205844bbd537ec8bc103e277284d5df52"
+      }
+    ],
+    "manifest": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/build-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/yolo26n-raw-output-minmax-head-qat-epoch/quantized/manifest.json",
+    "manifest_sha256": "bdb83c0ba59e480793b48ea09512023218209e56b6ff79ee7d5528186c787949",
+    "map50_95": 0.32435534982069636,
+    "map_drop": -0.04165657323974159
+  },
+  "dataset": {
+    "annotations": "/home/ubuntu/vision-buildkit/autoresearch/vision-buildkit-phase17-axelera-260731/run/portable-dataset/instances.json",
+    "images": 10,
+    "sha256": "f685a47efdcc0fbbcb22194e1d0e3a2a2d34dc565fe30f3f204b2bd5ed862f8c"
+  },
+  "decision": "FAIL",
+  "decoder": {
+    "box_format": "cxcywh",
+    "class_selection": "argmax",
+    "max_detections": 300,
+    "nms": "class-aware",
+    "nms_iou_threshold": 0.7
+  },
+  "evidence_kind": "axelera_cpu_quantized_simulator_raw_output_screening",
+  "gates": {
+    "class_mismatches": false,
+    "coverage": false,
+    "map_drop": true,
+    "max_score_delta": false
+  },
+  "non_claim": "Candidate execution used the Axelera CPU quantized-model simulator, not the Metis AIPU.",
+  "parity": {
+    "candidate_detections": 64,
+    "class_mismatches": 1,
+    "coverage": 0.9655172413793104,
+    "high_confidence_added": 2,
+    "high_confidence_lost": 0,
+    "matched": 56,
+    "max_score_delta": 0.448223739862442,
+    "mean_iou": 0.9516898948000987,
+    "mean_score_delta": 0.046103298131908686,
+    "min_iou": 0.8602635247874095,
+    "reference_detections": 58,
+    "unmatched_candidate": 8,
+    "unmatched_reference": 2
+  },
+  "schema_version": 1,
+  "source": {
+    "map50_95": 0.28269877658095477,
+    "path": "/home/ubuntu/voyager-sdk/experiments/cv-engine-94527ce/yolo26n-raw-head-qat-transplanted-260811.onnx",
+    "profile": "raw-opset17-end2end-false",
+    "sha256": "1b7c38d3da0003e94f5ba5ff13ab9de59b48c7c395c3fe208cfe8b829f09fc5b"
+  },
+  "threshold": 0.25
+}

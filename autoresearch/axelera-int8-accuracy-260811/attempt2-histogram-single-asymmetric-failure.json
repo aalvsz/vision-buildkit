@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "status": "TERMINAL_FAIL_AFTER_CALIBRATION",
+  "candidate": "per_tensor_histogram plus single_asymmetric MatMul",
+  "source_onnx_sha256": "d502815b0ebd8a97d8ea48ddf23278118555f08d66022abb5a804deb4158d960",
+  "calibration_images_completed": 200,
+  "failure": "At least one pinned zero (zero_point=0) input is needed for inputs to MatMul ops.",
+  "interpretation": "single_asymmetric does not unblock histogram PTQ in SDK 1.7.0; the hypothesis is falsified and hybrid is not repeated because it previously failed at the same exporter constraint.",
+  "remote_artifacts": {
+    "log_sha256": "5641a3ab46907e34a921f2d5d00c035ac340c4c567a60eda0eff8be1312ba355",
+    "compile_config_sha256": "5d78889187c2e8be7fd38353b7fcf05b696294abf844611c0a1e82a3d0908d0e",
+    "compiler_config_sha256": "4cc7f4ecb60e9babae7ae65317b25900f9957a88ef39a7f68d3bb7d9616067a3",
+    "cleaned_core_model_sha256": "100977775f9bcf204f5359f51e4731b52a5d4f39029e5ca16459989f8c1f74b8"
+  },
+  "device_execution": false
+}

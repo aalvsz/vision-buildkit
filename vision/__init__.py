@@ -18,6 +18,7 @@ from .plugins import (
     make_tensorrt_target,
 )
 from .providers import LibreYoloSourceAdapter, RFDetrSourceAdapter, UltralyticsSourceAdapter
+from .support import doctor_report, load_support_matrix, support_report
 from .types import Box, DetectionResult
 
 __all__ = [
@@ -48,4 +49,7 @@ __all__ = [
     "select_runtime",
     "CertificationReport",
     "ConformanceEvidenceBundle",
+    "load_support_matrix",
+    "support_report",
+    "doctor_report",
 ]

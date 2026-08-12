@@ -1,0 +1,44 @@
+schema_version: 1
+policy:
+  conformance_fixture:
+    purpose: fast-regression
+    claim: semantic smoke gate only
+  quality_evaluation:
+    purpose: accuracy and backend comparison
+    claim: requires declared dataset and paired source/candidate execution
+  performance_evaluation:
+    purpose: latency-throughput-resource characterization
+    claim: requires exact artifact, runtime, device, workload, and harness identity
+
+scopes:
+  - id: frozen-coco-conformance
+    status: executed
+    dataset: 10-image COCO validation subset
+    metrics: [map50_95, coverage, max_score_delta, lost_added_detections, class_mismatches]
+    evidence: docs/evidence/README.md
+    limitations: [not-full-coco, not-production, not-speed-claim]
+  - id: stratified-coco-quality
+    status: planned
+    dataset: sealed stratified COCO validation manifest
+    metrics: [map50_95, precision, recall, coverage, score_drift, class_mismatches]
+    required_bindings: [dataset_digest, source_artifact_digest, candidate_artifact_digest, runtime, hardware, harness]
+    limitations: [requires-licensed-local-dataset]
+  - id: full-coco-quality
+    status: planned
+    dataset: full COCO val2017 manifest
+    metrics: [map50_95, precision, recall, per_class_ap]
+    required_bindings: [dataset_digest, source_artifact_digest, candidate_artifact_digest, runtime, hardware, harness]
+    limitations: [requires-licensed-local-dataset]
+  - id: runtime-performance
+    status: tooling_ready
+    dataset: fixed benchmark image/workload manifest
+    metrics: [p50_ms, p95_ms, p99_ms, throughput_items_per_s, memory, warmup]
+    required_bindings: [artifact_digest, workload_digest, hardware_digest, harness_digest]
+    tooling: [vision/benchmark.py, vision/benchmark.py:verify_benchmark_report]
+    limitations: [no-cross-device-comparison-without-matched-harness]
+  - id: local-runtime-smoke
+    status: executed
+    dataset: one sealed COCO fixture image per runtime
+    metrics: [p50_ms, p95_ms, p99_ms, throughput_items_per_s]
+    evidence: autoresearch/local-conformance-260812/benchmark-*.json
+    limitations: [single-image, five-samples, development-only, not-cross-device-comparable]
