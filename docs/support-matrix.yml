@@ -1,0 +1,72 @@
+schema_version: 1
+generated_by: vision.support
+policy:
+  statuses:
+    - api_only
+    - build_only
+    - development_verified
+    - certified
+    - unsupported
+  claim_rules:
+    - API availability is not runtime verification.
+    - Development verification is bound to its evidence scope and is not a production claim.
+    - Certified requires a content-bound capsule and an independently reproducible release check.
+    - Unsupported combinations must fail closed with an actionable diagnostic.
+
+entries:
+  - id: onnxruntime-cpu-fp32
+    source: [libreyolo, rfdetr, rtdetr]
+    target: onnxruntime
+    device: apple-silicon-cpu
+    precision: fp32
+    status: development_verified
+    evidence: [docs/evidence/libreyolo9s-onnxruntime-apple-cpu.json, docs/evidence/rfdetr-base-onnxruntime-apple-cpu.json, docs/evidence/rtdetr-l-onnxruntime-apple-cpu.json]
+    limitations: [frozen-10-image-subset, unsigned, not-full-coco, not-production]
+  - id: openvino-cpu-fp32-fp16
+    source: [ultralytics]
+    target: openvino
+    device: apple-silicon-cpu
+    precision: [fp32, fp16]
+    status: development_verified
+    evidence: [docs/evidence/yolo26n-openvino-apple-cpu.json]
+    limitations: [frozen-10-image-subset, unsigned, not-full-coco, not-production]
+  - id: openvino-cpu-int8
+    source: [ultralytics]
+    target: openvino
+    device: apple-silicon-cpu
+    precision: int8
+    status: unsupported
+    evidence: [docs/evidence/yolo26n-openvino-int8-apple-cpu-FAIL.json]
+    limitations: [score-drift-gate-fails, ptq-ceiling]
+  - id: tensorrt-jetson-fp32-fp16
+    source: [ultralytics]
+    target: tensorrt
+    device: jetson-orin-nano
+    precision: [fp32, fp16]
+    status: development_verified
+    evidence: [docs/evidence/yolo26n-tensorrt-jetson-orin-nano.json]
+    limitations: [single-device, frozen-10-image-subset, unsigned, not-full-coco, not-production]
+  - id: tensorrt-jetson-int8
+    source: [ultralytics]
+    target: tensorrt
+    device: jetson-orin-nano
+    precision: int8
+    status: unsupported
+    evidence: [docs/evidence/yolo26n-tensorrt-int8-jetson-orin-nano-FAIL.json, docs/evidence/yolo26n-tensorrt-int8-raw-jetson-orin-nano.json]
+    limitations: [end-to-end-build-failure, raw-output-only-partial-gates]
+  - id: axelera-metis-int8
+    source: [ultralytics]
+    target: axelera-metis
+    device: metis-aipu
+    precision: int8
+    status: unsupported
+    evidence: [docs/evidence/yolo26n-axelera-metis-aipu-int8-FAIL.json]
+    limitations: [confidence-score-compression, parity-gate-fails, qat-required]
+  - id: generic-target-planning
+    source: [ultralytics, libreyolo, rfdetr, rtdetr, manual-onnx]
+    target: [onnxruntime, openvino, tensorrt]
+    device: declared-by-user
+    precision: [fp32, fp16, int8]
+    status: build_only
+    evidence: []
+    limitations: [planning-or-api-availability-is-not-execution]

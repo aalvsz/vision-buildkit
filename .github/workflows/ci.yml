@@ -31,11 +31,25 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Repository integrity
+        run: uv run python scripts/verify_repository.py
+
+      - name: Release manifest integrity
+        run: |
+          uv run python scripts/release_manifest.py create /tmp/vision-buildkit-release-manifest.json
+          uv run python scripts/release_manifest.py verify /tmp/vision-buildkit-release-manifest.json
+
+      - name: Dependency inventory
+        run: uv run python scripts/dependency_inventory.py --output /tmp/vision-buildkit-dependencies.json
+
       - name: Check formatting
         run: uv run ruff format --check vision tests scripts
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run coverage run -m pytest -q
+
+      - name: Coverage
+        run: uv run coverage report --fail-under=70
 
       - name: Build
         run: uv build

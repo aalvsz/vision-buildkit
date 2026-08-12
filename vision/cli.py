@@ -30,6 +30,25 @@ def emit(x):
     typer.echo(json.dumps(x, sort_keys=True, default=str))
 
 
+@app.command("support")
+def support(path: str | None = typer.Option(None, help="Override the repository support matrix path")):
+    """Print the evidence-bound backend support matrix."""
+    from .support import support_report
+
+    try:
+        emit(support_report(path))
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@app.command("doctor")
+def doctor():
+    """Report installed optional runtimes without claiming they are verified."""
+    from .support import doctor_report
+
+    emit(doctor_report())
+
+
 @contract_app.command("validate")
 def contract_validate(path: str):
     """Strictly validate a semantic contract and print its canonical digest."""
@@ -434,6 +453,17 @@ def validate_experiment_evidence(report: str):
     )
 
 
+@app.command("verify-benchmark")
+def verify_benchmark(path: str):
+    """Verify benchmark samples, derived statistics, and provenance digests."""
+    from .benchmark import verify_benchmark_report
+
+    try:
+        emit(verify_benchmark_report(json.loads(Path(path).read_text(encoding="utf-8"))))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @app.command()
 def inspect(source: str):
     p = Path(source)
@@ -460,6 +490,9 @@ def serve(
     batch_window_ms: int = 5,
     max_upload_bytes: int = 10_000_000,
     max_image_pixels: int = 40_000_000,
+    request_timeout_s: float | None = typer.Option(None, help="Per-request inference deadline in seconds"),
+    api_key: str | None = typer.Option(None, envvar="VISION_API_KEY", help="Optional Bearer token for /v1 endpoints"),
+    rate_limit_per_minute: int | None = typer.Option(None, help="Optional per-client /v1 request limit"),
     device: str = "auto",
     manifest: str | None = typer.Option(None),
     family: str | None = typer.Option(None),
@@ -491,5 +524,8 @@ def serve(
         batch_window_ms=batch_window_ms,
         max_upload_bytes=max_upload_bytes,
         max_image_pixels=max_image_pixels,
+        request_timeout_s=request_timeout_s,
+        api_key=api_key,
+        rate_limit_per_minute=rate_limit_per_minute,
     )
     uvicorn.run(application, host=host, port=port)

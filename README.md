@@ -9,6 +9,11 @@
 
 Vision BuildKit is an early, source-available toolchain for taking a vision model from a provider, describing its *end-to-end* semantics, producing a target artifact, comparing it against the source model, and packaging the evidence. It is deliberately not a training framework, model zoo, or new inference runtime.
 
+The repository is organized around a strict boundary: planning and API
+availability are useful, but only evidence-bound paired execution earns a
+development-support claim. See the [support matrix](docs/support-matrix.yml),
+[operations boundary](docs/OPERATIONS.md), and [release checklist](docs/RELEASE.md).
+
 Frameworks such as Ultralytics or LibreYOLO train and export models. Runtimes such as ONNX Runtime, TensorRT, and OpenVINO execute graphs. Vision BuildKit lives between them: it records what the model means, plans a compatible build, and refuses to represent an unverified result as a certified one.
 
 > **Research and evaluation only.** This repository is source-available, not OSI-approved open source. Non-commercial study, evaluation, modification, and forks are permitted under the [license](LICENSE); production, internal business, commercial, hosted, and paid use require a separate written agreement.
@@ -55,6 +60,19 @@ This table is deliberately narrower than the APIs and tests in the repository. �
 | INT8 (TensorRT and OpenVINO) | Partial (TensorRT) | Calibration interfaces exist. OpenVINO INT8 MIXED + ignored_scope on Sigmoid+Softmax achieves mAP 0.301 (drop 0.014) but max_score_delta 0.155 > 0.12 gate. TensorRT INT8 on the e2e ONNX fails to build (TRT 10.3.0 checkLinks bug with TopK/GatherElements); a raw-output ONNX (end2end=False) + MinMax calibrator + FLOAT OBEY (last 30 Conv) + 500 calib images achieves mAP 0.334 (better than FP32 ref) with 0 hc lost — 4 of 6 gates pass (coverage 0.912 < 0.98 and max_score_delta 0.168 > 0.12 fail). Axelera Metis INT8 failed (score compression on INT8-only AIPU). |
 
 The 10-image subset is a build/parity gate, **not** a full COCO accuracy claim, a speed claim, or a promise that any target hardware will work. Measurements are tied to the exact machine, artifact, runtime, input set, and harness.
+
+The canonical support policy is maintained in [`docs/support-matrix.yml`](docs/support-matrix.yml). Inspect it locally with:
+
+```bash
+uv run vision support
+uv run vision doctor
+```
+
+`vision doctor` reports installed modules and environment information only. It does not upgrade an API, import, compile, or smoke test into a runtime-support claim. The repository's fail-closed integrity check is:
+
+```bash
+uv run python scripts/verify_repository.py
+```
 
 **OpenVINO — verified in this development scope.** YOLO26n OpenVINO CPU FP32 and FP16 both passed observed validation on Apple Silicon (macOS arm64) over the frozen 10-image COCO subset. Source mAP50–95 was `0.317278` and both candidates achieved `0.318140`; detection coverage was `56/57` (`0.982456`), with no high-confidence losses/additions or class mismatches. This evidence is unsigned, not certified, not a full-COCO result, and not a speedup claim. The content-bound summary is in [`docs/evidence/yolo26n-openvino-apple-cpu.json`](docs/evidence/yolo26n-openvino-apple-cpu.json).
 

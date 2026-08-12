@@ -150,3 +150,74 @@ def benchmark_model(
     report["harness_digest"] = _digest(report["harness"])
     report["digest"] = _digest(report)
     return report
+
+
+def verify_benchmark_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Validate a benchmark report's derived statistics and provenance digests."""
+
+    if not isinstance(report, dict) or report.get("schema_version") != 1:
+        raise ValueError("benchmark report must be an object with schema_version=1")
+    samples = report.get("samples_ms")
+    if (
+        not isinstance(samples, list)
+        or not samples
+        or any(not isinstance(x, (int, float)) or not math.isfinite(x) or x <= 0 for x in samples)
+    ):
+        raise ValueError("benchmark samples_ms must be a non-empty list of finite positive numbers")
+    stats = report.get("end_to_end_ms")
+    if not isinstance(stats, dict):
+        raise ValueError("benchmark report lacks end_to_end_ms statistics")
+    expected_stats = {
+        "p50": _percentile(samples, 50),
+        "p95": _percentile(samples, 95),
+        "p99": _percentile(samples, 99),
+        "mean": statistics.fmean(samples),
+        "std": statistics.pstdev(samples),
+    }
+    for key, expected in expected_stats.items():
+        actual = stats.get(key)
+        if (
+            not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+            or not math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-12)
+        ):
+            raise ValueError(f"benchmark statistic {key} does not match samples_ms")
+    workload = report.get("workload")
+    environment = report.get("environment")
+    harness = report.get("harness")
+    if not all(isinstance(value, dict) for value in (workload, environment, harness)):
+        raise ValueError("benchmark workload, environment, and harness must be objects")
+    if report.get("workload_digest") != _digest(workload):
+        raise ValueError("benchmark workload digest mismatch")
+    if report.get("hardware_digest") != _digest(environment):
+        raise ValueError("benchmark hardware digest mismatch")
+    if report.get("harness_digest") != _digest(harness):
+        raise ValueError("benchmark harness digest mismatch")
+    if workload.get("repeats") != len(samples):
+        raise ValueError("benchmark workload repeat count does not match samples_ms")
+    batch = workload.get("batch")
+    if not isinstance(batch, int) or batch <= 0:
+        raise ValueError("benchmark workload batch must be a positive integer")
+    throughput = report.get("throughput_items_per_s")
+    expected_throughput = batch * 1000 / expected_stats["mean"]
+    if (
+        not isinstance(throughput, (int, float))
+        or not math.isfinite(throughput)
+        or not math.isclose(throughput, expected_throughput, rel_tol=0.0, abs_tol=1e-12)
+    ):
+        raise ValueError("benchmark throughput does not match samples_ms and batch")
+    digest = report.get("digest")
+    unsigned = dict(report)
+    unsigned.pop("digest", None)
+    if digest != _digest(unsigned):
+        raise ValueError("benchmark report digest mismatch")
+    return {
+        "schema_version": 1,
+        "samples": len(samples),
+        "p50_ms": expected_stats["p50"],
+        "p95_ms": expected_stats["p95"],
+        "workload_digest": report["workload_digest"],
+        "hardware_digest": report["hardware_digest"],
+        "harness_digest": report["harness_digest"],
+        "report_digest": digest,
+    }
