@@ -61,7 +61,7 @@ entries:
     precision: int8
     status: unsupported
     evidence: [docs/evidence/yolo26n-axelera-metis-aipu-int8-FAIL.json]
-    limitations: [confidence-score-compression, parity-gate-fails, qat-required]
+    limitations: [confidence-score-compression, parity-gate-fails, head-only-qat-screen-fails, qat-required]
   - id: generic-target-planning
     source: [ultralytics, libreyolo, rfdetr, rtdetr, manual-onnx]
     target: [onnxruntime, openvino, tensorrt]

@@ -47,3 +47,23 @@ The next technical path is a new, disjoint QAT pilot whose fake-quantizer is
 matched more closely to Voyager's per-tensor min/max behavior, followed by
 source-retention and held-out quantization gates. Do not tune the frozen
 ten-image fixture or use post-hoc score calibration as an INT8 artifact claim.
+
+## Follow-up CPU QAT attempts (2026-08-12)
+
+An isolated one-epoch CPU run over the sealed 126-pair curated corpus
+(`seed=260812`, `lr=1e-4`, consistency weight `0.01`) was exported as a plain
+raw-output ONNX, transplanted into the pinned 368-node raw topology, quantized
+with the unchanged Voyager per-tensor min-max configuration, and screened by
+the frozen CPU simulator. The source artifact SHA is
+`b0d92a6f18944b60a0539983cb80c7461a76b8e18d79da682412725de70aa6ef`; the
+quantized model SHA is
+`62d72461b252373139c19cedab5c4aad60ee414eb757ecfe1326e6426146f2f7`.
+
+The result was **FAIL**: mAP50-95 `0.319957` vs source `0.282699` and
+coverage `0.982759` passed, but one class mismatch and maximum score delta
+`0.448143` failed. A second isolated run fake-quantizing the terminal Conv
+output during training produced the same failure signature. Neither candidate
+was compiled or run on the Metis AIPU. Detailed handoffs remain under the
+ignored `autoresearch/qat-epoch-260812/` and
+`autoresearch/qat-epoch-output-260812-v2/` directories as local research
+records only.
